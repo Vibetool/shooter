@@ -1,0 +1,27 @@
+<title>Dustwell Shooter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&display=swap">
+<style>
+  /* Single-look pixel desert: the game commits to the Kenney sand palette in every theme. */
+  :root {
+    --sand: #f3cdac;
+    --ink: #47324b;
+    --paper: #ffffff;
+    --ember: #dd674c;
+    color-scheme: light;
+  }
+  html, body { height: 100%; margin: 0; background: var(--sand); color: var(--ink); overflow: hidden; }
+  body { font-family: "Poppins", system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; image-rendering: pixelated; background: var(--sand); }
+  #game:focus-visible { outline: 3px solid var(--ember); outline-offset: -3px; }
+  #boot { position: fixed; inset: 0; display: grid; place-items: center; font: 600 15px "Poppins", system-ui, sans-serif; color: var(--ink); background: var(--sand); }
+</style>
+<canvas id="game" tabindex="0" aria-label="Dustwell Shooter game. Use the mouse and keyboard to play."></canvas>
+<div id="boot">Loading Dustwell…</div>
+<script>
+/*__ASSETS__*/
+</script>
+<script>
+/*__GAME__*/
+</script>

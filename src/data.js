@@ -1,0 +1,247 @@
+/* ==========================================================================
+   Data: weapons, monsters, levels, quests
+   ========================================================================== */
+const WEAPONS = [
+  { name: 'Pistol',       tile: 0, price: 1,   dmg: 2,   rate: 3.5, speed: 250, spread: 3,  pellets: 1, mag: 8,  reload: 0.9, life: 0.8,  sfx: 'shoot-a', kind: 'bullet' },
+  { name: 'Long Pistol',  tile: 1, price: 5,   dmg: 3,   rate: 3.5, speed: 290, spread: 2,  pellets: 1, mag: 10, reload: 0.9, life: 0.9,  sfx: 'shoot-b', kind: 'bullet' },
+  { name: 'Blaster',      tile: 2, price: 15,  dmg: 3,   rate: 6,   speed: 270, spread: 4,  pellets: 1, mag: 18, reload: 1.0, life: 0.85, sfx: 'shoot-c', kind: 'laser' },
+  { name: 'SMG',          tile: 4, price: 30,  dmg: 2.5, rate: 11,  speed: 300, spread: 8,  pellets: 1, mag: 32, reload: 1.2, life: 0.75, sfx: 'shoot-d', kind: 'bullet' },
+  { name: 'Sniper',       tile: 3, price: 60,  dmg: 22,  rate: 1.3, speed: 520, spread: 0,  pellets: 1, mag: 5,  reload: 1.5, life: 0.9,  sfx: 'shoot-g', kind: 'tracer', pierce: 4 },
+  { name: 'AK-47',        tile: 5, price: 90,  dmg: 5,   rate: 9,   speed: 360, spread: 5,  pellets: 1, mag: 30, reload: 1.3, life: 0.8,  sfx: 'shoot-e', kind: 'bullet' },
+  { name: 'Plasma Rifle', tile: 6, price: 100, dmg: 9,   rate: 4,   speed: 230, spread: 3,  pellets: 1, mag: 16, reload: 1.4, life: 1.0,  sfx: 'shoot-f', kind: 'plasma', splash: 24 },
+  { name: 'Shotgun',      tile: 7, price: 115, dmg: 5,   rate: 1.8, speed: 330, spread: 26, pellets: 8, mag: 6,  reload: 1.5, life: 0.45, sfx: 'shoot-h', kind: 'pellet' }
+];
+const KNIFE = { name: 'Knife', tile: 8, dmg: 2.5, rate: 2.5, range: 26 };
+
+const MONSTERS = {
+  slime:  { name: 'Slime', plural: 'slimes', sheet: 'enemies', f: 0, hp: 4, speed: 26, dmg: 1, ai: 'chase' },
+  bat:    { name: 'Bat', plural: 'bats', sheet: 'enemies', f: 4, hp: 4, speed: 56, dmg: 1, ai: 'fly' },
+  imp:    { name: 'Ember Imp', plural: 'ember imps', sheet: 'enemies', f: 8, hp: 9, speed: 36, dmg: 1, ai: 'shoot', range: 100, cd: 2.4, shot: { speed: 105, n: 1, gap: 0, spread: 0, kind: 'fire' } },
+  hound:  { name: 'Dust Hound', plural: 'dust hounds', sheet: 'players', f: 4, hp: 16, speed: 44, dmg: 1, ai: 'shoot', range: 120, cd: 2.0, gun: 10, shot: { speed: 160, n: 2, gap: 0.16, spread: 6, kind: 'ebullet' } },
+  raider: { name: 'Raider Rabbit', plural: 'raider rabbits', sheet: 'players', f: 12, hp: 22, speed: 52, dmg: 1, ai: 'shoot', range: 110, cd: 1.8, gun: 14, shot: { speed: 170, n: 4, gap: 0.09, spread: 10, kind: 'ebullet' } }
+};
+const LEVEL_N = 50;
+/* theme knobs: tP/tT purple & teal plateaus, bld buildings, plz plazas, yard fenced yards,
+   pP/pT/pD purple, teal, dark-sand ground patches, cac cacti, rock rocks, bone bones, tree trees */
+const THEMES = [
+  { tP: 0, tT: 1, bld: 0, plz: 0, yard: 0, pP: 0, pT: 3, pD: 3, cac: 14, rock: 6, bone: 1, tree: 2 },
+  { tP: 0, tT: 1, bld: 1, plz: 0, yard: 0, pP: 1, pT: 2, pD: 2, cac: 22, rock: 6, bone: 2, tree: 1 },
+  { tP: 3, tT: 0, bld: 0, plz: 0, yard: 0, pP: 4, pT: 0, pD: 2, cac: 6, rock: 6, bone: 1, tree: 4 },
+  { tP: 0, tT: 1, bld: 2, plz: 1, yard: 2, pP: 1, pT: 1, pD: 3, cac: 6, rock: 10, bone: 1, tree: 1 },
+  { tP: 2, tT: 2, bld: 0, plz: 1, yard: 0, pP: 3, pT: 3, pD: 1, cac: 6, rock: 4, bone: 2, tree: 3 },
+  { tP: 0, tT: 3, bld: 1, plz: 1, yard: 1, pP: 0, pT: 5, pD: 1, cac: 8, rock: 4, bone: 0, tree: 6 },
+  { tP: 2, tT: 2, bld: 0, plz: 0, yard: 1, pP: 2, pT: 2, pD: 3, cac: 10, rock: 10, bone: 2, tree: 2 },
+  { tP: 1, tT: 0, bld: 3, plz: 1, yard: 2, pP: 1, pT: 1, pD: 3, cac: 6, rock: 6, bone: 1, tree: 1 },
+  { tP: 4, tT: 0, bld: 1, plz: 0, yard: 0, pP: 5, pT: 0, pD: 2, cac: 6, rock: 10, bone: 3, tree: 4 },
+  { tP: 2, tT: 1, bld: 1, plz: 1, yard: 1, pP: 2, pT: 1, pD: 4, cac: 8, rock: 10, bone: 3, tree: 2 },
+  { tP: 0, tT: 1, bld: 1, plz: 0, yard: 1, pP: 0, pT: 2, pD: 6, cac: 18, rock: 8, bone: 4, tree: 1 },
+  { tP: 1, tT: 1, bld: 2, plz: 1, yard: 3, pP: 1, pT: 1, pD: 3, cac: 8, rock: 6, bone: 2, tree: 1 },
+  { tP: 2, tT: 2, bld: 0, plz: 1, yard: 0, pP: 2, pT: 2, pD: 2, cac: 6, rock: 6, bone: 2, tree: 4 },
+  { tP: 0, tT: 1, bld: 2, plz: 1, yard: 5, pP: 1, pT: 2, pD: 2, cac: 4, rock: 6, bone: 1, tree: 2 },
+  { tP: 1, tT: 1, bld: 4, plz: 2, yard: 2, pP: 1, pT: 1, pD: 3, cac: 6, rock: 6, bone: 2, tree: 1 },
+  { tP: 2, tT: 0, bld: 0, plz: 0, yard: 1, pP: 3, pT: 0, pD: 5, cac: 10, rock: 12, bone: 8, tree: 2 },
+  { tP: 1, tT: 4, bld: 2, plz: 1, yard: 1, pP: 1, pT: 6, pD: 1, cac: 6, rock: 6, bone: 1, tree: 8 },
+  { tP: 0, tT: 0, bld: 5, plz: 3, yard: 3, pP: 1, pT: 1, pD: 2, cac: 4, rock: 6, bone: 1, tree: 2 },
+  { tP: 3, tT: 3, bld: 1, plz: 1, yard: 1, pP: 3, pT: 3, pD: 3, cac: 10, rock: 8, bone: 3, tree: 4 },
+  { tP: 3, tT: 2, bld: 3, plz: 2, yard: 2, pP: 2, pT: 2, pD: 4, cac: 8, rock: 10, bone: 4, tree: 3 }
+];
+const EARLY_POOLS = [['slime'], ['slime'], ['slime', 'bat'], ['slime', 'bat'], ['slime', 'bat'], ['slime', 'bat', 'imp'], ['bat', 'imp', 'slime'], ['imp', 'slime', 'bat'], ['imp', 'bat', 'hound'], ['imp', 'bat', 'hound'], ['hound', 'imp', 'slime'], ['hound', 'imp', 'bat'], ['hound', 'raider', 'bat'], ['raider', 'hound', 'imp'], ['raider', 'hound'], ['raider', 'imp', 'bat', 'hound'], ['raider', 'hound', 'slime', 'imp'], ['raider', 'hound', 'imp'], ['raider', 'hound', 'imp', 'bat'], ['raider', 'hound', 'imp']];
+const LEVEL_NAMES = ['Dusty Outskirts', 'Cactus Flats', 'Lavender Mesa', 'Old Scrapyard', 'Slime Hollow', 'Teal Oasis', 'Canyon Crossing', 'Rusty Outpost', 'Violet Badlands', 'Ember Ridge', 'Golden Dunes', 'Bandit Camp', 'Twin Plateaus', 'Chain-Link Maze', 'Bandit Fortress', 'Bone Valley', 'Overgrown Ruins', 'Steel Quarter', 'Mirage Basin', 'Sunscorch Gate', 'Copper Wells', 'Whispering Dunes', 'Lantern Square', 'Rattlesnake Pass', 'Glass Desert', 'Broken Aqueduct', 'Mesa Steps', 'Salt Flats', 'Coyote Hills', 'Scorpion Den', 'Dry Riverbed', 'Sandstorm Alley', 'Rust Gulch', 'Jade Springs', 'Smuggler\u2019s Yard', 'Vulture Peak', 'Sunken Market', 'Dune Sea', 'Iron Corral', 'Ashen Wastes', 'Moonlit Mesa', 'Prospector\u2019s Folly', 'Thornfield', 'Canyon Fort', 'Mirage Palace', 'Howling Flats', 'Gilded Ruins', 'Last Outpost', 'Tyrant\u2019s Road', 'Tyrant\u2019s Throne'];
+const LEVELS = LEVEL_NAMES.map((name, i) => {
+  const L = i + 1, r = rng(L * 104729 + 7), base = THEMES[i % THEMES.length], th = {};
+  for (const k in base) th[k] = Math.max(0, base[k] + (i >= THEMES.length ? rint(r, -1, 2) : 0));
+  let pool;
+  if (i < EARLY_POOLS.length) pool = EARLY_POOLS[i];
+  else { pool = ['raider', 'hound']; const extra = ['imp', 'bat', 'slime'].filter(() => r() < 0.6); pool = pool.concat(extra.length ? extra : ['imp']); }
+  return { name, w: 40 + Math.min(20, Math.floor(L * 0.6)), h: 28 + Math.min(12, Math.floor(L * 0.4)), pool, th };
+});
+const BOSS_KINDS = [
+  { type: 'slime', names: ['King Slime', 'Slime Colossus'], moves: ['charge', 'spawn', 'ring'] },
+  { type: 'imp', names: ['Fire Lord', 'Inferno Imp'], moves: ['ring', 'aim', 'spawn'] },
+  { type: 'hound', names: ['Bandit Chief', 'Hound Marshal'], moves: ['spread', 'spawn', 'aim', 'charge'] },
+  { type: 'raider', names: ['Raider Warlord', 'Rabbit Overlord'], moves: ['spread', 'aim', 'charge', 'spawn'] },
+  { type: 'bat', names: ['Bat Queen', 'Night Queen'], moves: ['ring', 'spawn', 'charge'] }
+];
+const BOSSES = {};
+for (let L = 5; L <= LEVEL_N; L += 5) {
+  const k = L / 5 - 1, K = BOSS_KINDS[k % 5];
+  BOSSES[L] = { type: K.type, name: K.names[Math.floor(k / 5) % 2], hp: Math.round(140 + (L - 5) * 62), scale: 2, speed: 30 + L * 0.3, moves: K.moves };
+}
+BOSSES[LEVEL_N] = { type: 'raider', name: 'Sand Tyrant', hp: Math.round((140 + (LEVEL_N - 5) * 62) * 1.2), scale: 2.3, speed: 48, moves: ['ring', 'spread', 'spawn', 'charge', 'aim'] };
+const levelCount = L => { const n = 6 + Math.round(0.9 * L); return BOSSES[L] ? Math.round(n * 0.7) : n; };
+const hpMul = L => 1 + 0.08 * (L - 1);
+const enemyDmg = L => 1 + Math.min(2, Math.floor((L - 1) / 17));
+const goldPerKill = L => (L <= 10 ? 3 : 5);
+function highestUnlocked() { let u = 1; for (let i = 0; i < LEVEL_N; i++) if (SAVE.cleared[i]) u = Math.min(LEVEL_N, i + 2); return u; }
+function bossName(L) { return BOSSES[L] ? BOSSES[L].name : ''; }
+
+/* ---------------- quests ---------------- */
+const NPCS = {
+  cat:   { name: 'Mira', title: 'the Sheriff', sheet: 'players', f: 0 },
+  mouse: { name: 'Pip',  title: 'the Trader',  sheet: 'players', f: 8 }
+};
+const MAX_TIER = 10;
+const REASONS = {
+  slime: [
+    'Slimes oozed into the town water tank again. Everything tastes like goo.',
+    'A slime swallowed the mayor’s hat during the parade. The town wants payback.',
+    'Slime trails are eating through the caravan wheels. Clear them before the next convoy.'
+  ],
+  bat: [
+    'Bats keep stealing shiny coins from the market stalls every night.',
+    'Nobody in Dustwell has slept in a week. Those wings sound like sandpaper.',
+    'The bats nest in the water pipes and chew the seals. The pumps are leaking.'
+  ],
+  imp: [
+    'Ember imps set the cactus farm on fire. Twice.',
+    'The imps are melting fence posts for fun. Our goats keep wandering off.',
+    'An ember imp torched the post office. Three weeks of letters, gone.'
+  ],
+  hound: [
+    'Dust hound bandits robbed the supply caravan at dawn.',
+    'The hounds put a bounty on my whiskers. Time to return the favor.',
+    'Dust hounds are charging a toll on the only road to the oasis.'
+  ],
+  raider: [
+    'Raider rabbits are digging tunnels under the town walls.',
+    'The raiders stole the town’s only compass. Now the scouts keep getting lost.',
+    'Raider rabbits ambushed the doctor’s wagon. We need that medicine.'
+  ],
+  killAny: [
+    'The desert is getting crowded with monsters. Thin them out before the caravan arrives.',
+    'The scouts counted too many monsters near the trade road. Bring that number down.',
+    'Harvest season starts soon, and the farmers won’t go out until the dunes are safer.'
+  ],
+  clear: [
+    'Scouts lost contact with {lname}. Clear it so we can reopen the road.',
+    'An old map marks a well in {lname}. Make it safe and we can dig.',
+    'Travelers keep vanishing around {lname}. Go see what’s out there.'
+  ],
+  boss: [
+    'The {boss} has been raiding our caravans for months. End it.',
+    'Every monster out there answers to the {boss}. Take it down and the rest will scatter.'
+  ],
+  weapon: [
+    'I just tuned the {weapon}. Field-test it on {n} monsters and tell me how it handles.',
+    'A buyer wants proof the {weapon} works before paying. Show them with {n} clean takedowns.'
+  ],
+  flawless: [
+    'Speed and caution keep a sheriff alive. Clear Level {lvl} or later while taking 3 hits or fewer.',
+    'The new deputies need to see how it’s done. Clear Level {lvl} or later with 3 hits or fewer.'
+  ],
+  chests: [
+    'My old supply chests are scattered all over the dunes. Open {n} before the raiders do.',
+    'I hid my savings in chests and forgot where. Find {n} of them and we split the profit.',
+    'The caravan dropped crates during the sandstorm. Open {n} chests and the guild will pay.'
+  ],
+  gold: [
+    'The well needs a new pump. Bring back {n} gold worth of loot from the wild.',
+    'Prices went up at the bazaar. Collect {n} gold on your runs and I’ll make it worth your while.',
+    'The town is saving for a wall. Collect {n} gold out there and I’ll add a bonus.'
+  ]
+};
+const CHATTER = {
+  cat: ['Quiet day in Dustwell. Enjoy it while it lasts.', 'Keep your knife sharp and your canteen full.', 'I’ll have another job soon. The desert never sleeps.'],
+  mouse: ['Business is slow. Monsters scare away customers.', 'Gold buys guns, guns buy safety. Simple math.', 'Come back later. I’m sorting through some new rumors.']
+};
+function questText(q) {
+  const lv = q.lvl || 1;
+  switch (q.type) {
+    case 'kill': return { title: 'Hunt ' + MONSTERS[q.mon].plural, goal: `Defeat ${q.n} ${MONSTERS[q.mon].plural}` + (q.minL > 1 ? ` in Level ${q.minL} or later` : '') };
+    case 'killAny': return { title: 'Thin the herd', goal: `Defeat ${q.n} monsters` + (q.minL > 1 ? ` in Level ${q.minL} or later` : '') };
+    case 'clear': return { title: 'Reopen ' + LEVELS[lv - 1].name, goal: `Clear Level ${lv} or a later level` };
+    case 'boss': return { title: 'Bounty: ' + bossName(lv), goal: `Defeat the ${bossName(lv)} in Level ${lv}` };
+    case 'weapon': return { title: 'Field test', goal: `Defeat ${q.n} monsters with the ${WEAPONS[q.w].name}` };
+    case 'flawless': return { title: 'Clean run', goal: `Clear Level ${lv} or later taking 3 hits or fewer` };
+    case 'chests': return { title: 'Treasure hunt', goal: `Open ${q.n} chests` };
+    case 'gold': return { title: 'Fundraiser', goal: `Collect ${q.n} gold during runs` };
+  }
+  return { title: 'Job', goal: '' };
+}
+function fillReason(s, q) {
+  return s.replace('{n}', q.n).replace('{lvl}', q.lvl).replace('{lname}', q.lvl ? LEVELS[q.lvl - 1].name : '')
+    .replace('{boss}', q.lvl ? bossName(q.lvl) : '').replace('{weapon}', q.w != null ? WEAPONS[q.w].name : '');
+}
+function monstersUpTo(L) { const s = new Set(); for (let i = 0; i < L; i++) LEVELS[i].pool.forEach(m => s.add(m)); return [...s]; }
+function makeQuest(npcId) {
+  const npc = SAVE.npcs[npcId], t = Math.min(npc.count, MAX_TIER);
+  const r = rng(npc.count * 7919 + (npcId === 'cat' ? 17 : 911) + (SAVE.created % 100003));
+  const unl = highestUnlocked();
+  const tierL = clamp(1 + 5 * t, 1, LEVEL_N);
+  const lvl = Math.max(1, Math.min(tierL, unl + 1));
+  let q;
+  if (npc.count === 0 && npcId === 'cat') {
+    q = { type: 'kill', mon: 'slime', n: 8, minL: 1, reason: 'Welcome to Dustwell, stranger. Slimes keep oozing into our water tank. Take your knife, head out and defeat 8 of them. They drop coins, so stop by the armory afterwards.' };
+  } else if (npc.count === 0 && npcId === 'mouse') {
+    q = { type: 'chests', n: 2, reason: 'Psst. My supply chests got scattered when the slimes chased my wagon. Open 2 of them out there and the finder’s fee is yours.' };
+  } else {
+    const types = npcId === 'cat' ? ['kill', 'killAny', 'clear', 'boss', 'weapon', 'flawless'] : ['chests', 'gold', 'clear', 'kill', 'weapon'];
+    const ownedTop = SAVE.owned.lastIndexOf(1);
+    let tries = 0;
+    while (!q && tries++ < 20) {
+      const ty = pick(r, types);
+      if (ty === 'kill') {
+        const minL = Math.max(1, lvl - 3);
+        const mons = new Set(); for (let i = minL - 1; i < lvl; i++) LEVELS[i].pool.forEach(m => mons.add(m));
+        const mon = pick(r, [...mons]);
+        q = { type: 'kill', mon, n: 6 + 3 * t, minL, reason: pick(r, REASONS[mon]) };
+      } else if (ty === 'killAny') q = { type: 'killAny', n: 10 + 5 * t, minL: Math.max(1, lvl - 3), reason: pick(r, REASONS.killAny) };
+      else if (ty === 'clear') q = { type: 'clear', lvl, reason: pick(r, REASONS.clear) };
+      else if (ty === 'boss') {
+        const bl = Math.max(5, Math.floor(Math.min(lvl, unl) / 5) * 5);
+        if (t < 2 || bl > unl) continue;
+        q = { type: 'boss', lvl: bl, reason: pick(r, REASONS.boss) };
+      } else if (ty === 'weapon') {
+        const w = Math.min(t, 7, ownedTop + 1);
+        if (w < 0) continue;
+        q = { type: 'weapon', w, n: 10 + 3 * t, reason: pick(r, REASONS.weapon) };
+      } else if (ty === 'flawless') { if (t < 1) continue; q = { type: 'flawless', lvl: Math.max(1, lvl - 2), reason: pick(r, REASONS.flawless) }; }
+      else if (ty === 'chests') q = { type: 'chests', n: Math.min(2 + t, 12), reason: pick(r, REASONS.chests) };
+      else if (ty === 'gold') q = { type: 'gold', n: 20 + 15 * t, reason: pick(r, REASONS.gold) };
+    }
+    if (!q) q = { type: 'killAny', n: 10 + 5 * t, minL: 1, reason: pick(r, REASONS.killAny) };
+    q.reason = fillReason(q.reason, q);
+  }
+  const bonus = { clear: 6, boss: 20, flawless: 10, weapon: 4, gold: 0, chests: 0, kill: 0, killAny: 2 }[q.type] || 0;
+  q.reward = Math.round(12 + 9 * t + bonus);
+  q.tier = t; q.prog = 0; q.status = 'offered'; q.npc = npcId;
+  if (q.type === 'clear' || q.type === 'boss' || q.type === 'flawless') q.n = 1;
+  return q;
+}
+/* quest timer: each NPC offers a job every 20 minutes (one open job at a time) */
+function questTick() {
+  if (!SAVE) return;
+  const now = Date.now(); let changed = false;
+  for (const id of ['cat', 'mouse']) {
+    const n = SAVE.npcs[id];
+    if (!n.quest && now >= n.next) {
+      n.quest = makeQuest(id);
+      n.next = Math.max(now, n.next) + QUEST_MS;
+      changed = true;
+      if (Game.toast) Game.toast(NPCS[id].name + ' has a new job for you');
+    }
+  }
+  if (changed) persist();
+}
+function questEvent(ev) {
+  for (const id of ['cat', 'mouse']) {
+    const q = SAVE.npcs[id].quest;
+    if (!q || q.status !== 'active') continue;
+    let inc = 0;
+    switch (q.type) {
+      case 'kill': if (ev.k === 'kill' && ev.mon === q.mon && ev.L >= (q.minL || 1)) inc = 1; break;
+      case 'killAny': if (ev.k === 'kill' && ev.L >= (q.minL || 1)) inc = 1; break;
+      case 'weapon': if (ev.k === 'kill' && ev.w === q.w) inc = 1; break;
+      case 'clear': if (ev.k === 'clear' && ev.L >= q.lvl) inc = 1; break;
+      case 'flawless': if (ev.k === 'clear' && ev.L >= q.lvl && ev.hits <= 3) inc = 1; break;
+      case 'boss': if (ev.k === 'boss' && ev.L === q.lvl) inc = 1; break;
+      case 'chests': if (ev.k === 'chest') inc = 1; break;
+      case 'gold': if (ev.k === 'gold') inc = ev.n; break;
+    }
+    if (inc) {
+      q.prog = Math.min(q.n, q.prog + inc);
+      if (q.prog >= q.n) { q.status = 'done'; sfx('coin-d', 0.8); if (Game.toast) Game.toast('Job done! Visit ' + NPCS[id].name + ' for your reward'); }
+    }
+  }
+}
+const Game = { toast: null };
