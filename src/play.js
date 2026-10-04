@@ -15,7 +15,7 @@ class Play {
     this.meds = m.medkits.map(c => ({ x: c.x * T + 8, y: c.y * T + 12, used: false }));
     const wi = SAVE.owned[SAVE.equipped] ? SAVE.equipped : -1;
     this.p = { x: m.spawn.x * T + 8, y: m.spawn.y * T + 10, vx: 0, vy: 0, h: 0, ramp: false, hp: 10, maxHp: 10, inv: 1, aim: 0, wi,
-      ammo: wi >= 0 ? WEAPONS[wi].mag : 0, reload: 0, cd: 0, knifeT: 0, knifeCd: 0, knifeA: 0, dashT: 0, dashCd: 0, dashX: 0, dashY: 0, walk: 0, moving: false, dead: false, scale: 1, shield: 1, maxShield: 1 };
+      ammo: wi >= 0 ? WEAPONS[wi].mag : 0, reload: 0, cd: 0, knifeT: 0, knifeCd: 0, autoKnifeCd: 0, knifeA: 0, dashT: 0, dashCd: 0, dashX: 0, dashY: 0, walk: 0, moving: false, dead: false, scale: 1, shield: 1, maxShield: 1 };
     this.total = levelCount(this.L); this.spawned = 0; this.killed = 0; this.spawnT = 1.5;
     this.bossDef = BOSSES[this.L] || null; this.bossSpawned = false; this.bossEnt = null; this.bossDead = false;
     this.cap = 4 + Math.floor(this.L * 0.6);
@@ -166,16 +166,16 @@ class Play {
       if (d < KNIFE.range + 6 * e.scale && (Math.abs(angDiff(Math.atan2(dy, dx), a)) < 1.2 || d < 12)) this.damage(e, KNIFE.dmg, -1, Math.cos(a) * 160, Math.sin(a) * 160);
     }
   }
-  /* the knife strikes on its own at the closest monster inside its reach */
+  /* the knife strikes on its own at the closest monster inside its reach, at most once every 2 seconds */
   autoKnife() {
-    const p = this.p; if (p.knifeCd > 0 || p.dead) return;
+    const p = this.p; if (p.autoKnifeCd > 0 || p.knifeCd > 0 || p.dead) return;
     let best = null, bd = Infinity;
     for (const e of this.ents) {
       if (e.dead) continue;
       const dx = e.x - p.x, dy = (e.y - 6 * e.scale) - (p.y - 6), d = Math.hypot(dx, dy);
       if (d < KNIFE.range + 6 * e.scale && d < bd) { bd = d; best = Math.atan2(dy, dx); }
     }
-    if (best !== null) this.knife(best);
+    if (best !== null) { this.knife(best); p.autoKnifeCd = KNIFE.autoCd; }
   }
   damage(e, dmg, wi, kx, ky) {
     if (e.dead) return;
@@ -248,7 +248,7 @@ class Play {
       this.autoKnife();
     }
     // timers
-    p.cd = Math.max(0, p.cd - dt); p.knifeCd = Math.max(0, p.knifeCd - dt); p.knifeT = Math.max(0, p.knifeT - dt);
+    p.cd = Math.max(0, p.cd - dt); p.knifeCd = Math.max(0, p.knifeCd - dt); p.autoKnifeCd = Math.max(0, p.autoKnifeCd - dt); p.knifeT = Math.max(0, p.knifeT - dt);
     p.inv = Math.max(0, p.inv - dt); p.dashCd = Math.max(0, p.dashCd - dt);
     if (p.reload > 0) { p.reload -= dt; if (p.reload <= 0) { p.reload = 0; p.ammo = WEAPONS[p.wi].mag; sfx('move-c' in AUD.buf ? 'move-c' : 'select-a', 0.5); } }
     // movement

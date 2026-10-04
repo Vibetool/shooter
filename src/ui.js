@@ -316,7 +316,7 @@ class Options extends MenuScene {
       else this.confirmT = 3;
     });
     if (this.confirmT > 0) stext('Click again to erase gold, weapons and levels', x + 196, yy + 7, 4.4, P.redD, 'left', 600);
-    const help = ['WASD or arrows move. Mouse aims, hold left click to shoot.', 'Your knife strikes by itself when a monster gets close.', 'Space dashes, R reloads, Esc pauses.'];
+    const help = ['WASD or arrows move. Mouse aims, hold left click to shoot.', 'Your knife strikes by itself every 2 seconds when a monster is close.', 'Space dashes, R reloads, Esc pauses.'];
     help.forEach((l, k) => stext(l, x + w / 2, y + 168 + k * 8, 5, P.dark, 'center', 500));
     textButton(this, 'red', x + w / 2 - 32, y + h - 31, 64, 21, 'Done', () => popScene(this));
     this.end();

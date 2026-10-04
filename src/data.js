@@ -17,7 +17,7 @@ const ORANGE_N = ORANGE.length;
 const WEAPONS = ORANGE.concat(ORANGE.map(w => ({ ...w, name: 'Green ' + w.name, tile: w.tile + 10, price: w.price * 2, dmg: w.dmg * 2, green: true })));
 const allOrange = () => SAVE.owned.slice(0, ORANGE_N).every(Boolean);
 const canBuy = wi => wi < ORANGE_N || (allOrange() && (wi === ORANGE_N || !!SAVE.owned[wi - 1]));
-const KNIFE = { name: 'Knife', tile: 8, dmg: 2.5, rate: 2.5, range: 26 };
+const KNIFE = { name: 'Knife', tile: 8, dmg: 2.5, rate: 2.5, range: 26, autoCd: 2 }; // autoCd: seconds between automatic strikes
 
 const MONSTERS = {
   slime:  { name: 'Slime', plural: 'slimes', sheet: 'enemies', f: 0, hp: 4, speed: 26, dmg: 1, ai: 'chase' },
