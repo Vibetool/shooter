@@ -7,6 +7,7 @@ async function boot(hotData) {
   if (!SAVE.savedAt) persist();
   await loadImages();
   makeWhite('enemies'); makeWhite('players');
+  makeTint('enemies', 'Y', 'rgba(255,214,64,0.72)'); makeTint('players', 'Y', 'rgba(255,214,64,0.72)');
   buildGlyphs();
   try { await Promise.race([document.fonts.load('600 20px Poppins'), new Promise(r => setTimeout(r, 1500))]); } catch (e) { /* fallback font */ }
   calibrateFont();

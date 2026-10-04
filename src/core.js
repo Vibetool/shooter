@@ -67,6 +67,14 @@ function makeWhite(k) {
   g.globalCompositeOperation = 'source-in'; g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
   SHEET[k + 'W'] = { img: c, ts: s.ts, cols: s.cols };
 }
+/* yellow-tinted copy of a sheet (used when the skill strikes a monster) */
+function makeTint(k, suffix, color) {
+  const s = SHEET[k]; const c = document.createElement('canvas');
+  c.width = s.img.width; c.height = s.img.height;
+  const g = c.getContext('2d'); g.drawImage(s.img, 0, 0);
+  g.globalCompositeOperation = 'source-atop'; g.fillStyle = color; g.fillRect(0, 0, c.width, c.height);
+  SHEET[k + suffix] = { img: c, ts: s.ts, cols: s.cols };
+}
 /* draw a tile; (x,y) = top-left of the (scaled) tile box */
 function spr(k, i, x, y, o) {
   const s = SHEET[k]; if (!s) return;
@@ -89,6 +97,16 @@ function nine(k, sx, sy, sw, sh, l, t, r, b, x, y, w, h) {
   D(sx, sy + sh - b, l, b, x, y + h - b, l, b); D(sx + l, sy + sh - b, mw, b, x + l, y + h - b, dw, b); D(sx + sw - r, sy + sh - b, r, b, x + w - r, y + h - b, r, b);
 }
 const PANEL = { yellow: [48, 0], red: [96, 0], grey: [144, 0], orange: [192, 0], blue: [240, 0] };
+/* the grey panel (UI tiles 9-11 / 27-29 / 45-47) cut down to any small size: 6px rim from the corner/edge tiles */
+function smallPanel(x, y, w, h, shadow = true) {
+  if (shadow) { ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.fillRect(x, y + 2, w, h); }
+  const img = SHEET.ui.img, b = 6, T_ = (i, sx, sy, sw, sh, dx, dy, dw, dh) => ctx.drawImage(img, (i % 18) * 16 + sx, Math.floor(i / 18) * 16 + sy, sw, sh, dx, dy, dw, dh);
+  T_(28, 0, 0, 16, 16, x + b, y + b, w - 2 * b, h - 2 * b);
+  T_(10, 0, 0, 16, b, x + b, y, w - 2 * b, b); T_(46, 0, 16 - b, 16, b, x + b, y + h - b, w - 2 * b, b);
+  T_(27, 0, 0, b, 16, x, y + b, b, h - 2 * b); T_(29, 16 - b, 0, b, 16, x + w - b, y + b, b, h - 2 * b);
+  T_(9, 0, 0, b, b, x, y, b, b); T_(11, 16 - b, 0, b, b, x + w - b, y, b, b);
+  T_(45, 0, 16 - b, b, b, x, y + h - b, b, b); T_(47, 16 - b, 16 - b, b, b, x + w - b, y + h - b, b, b);
+}
 function panel(kind, x, y, w, h, shadow = true) {
   if (shadow) { ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.fillRect(x, y + 2, w, h); }
   const p = PANEL[kind];
@@ -311,6 +329,7 @@ function defaultSave() {
     cleared: new Array(50).fill(0), best: new Array(50).fill(0),
     stats: { kills: 0, goldEarned: 0, goldSpent: 0, chests: 0, deaths: 0, quests: 0, bosses: 0, playTime: 0, runs: 0 },
     npcs: { cat: { next: now, quest: null, count: 0 }, mouse: { next: now + STAGGER_MS, quest: null, count: 0 } }, lastJobAt: 0,
+    upg: { regen: 0, fighter: 0, skill: 0 },
     settings: { sfx: 0.8, music: 0.45, shake: 1, nums: 1 }
   };
 }

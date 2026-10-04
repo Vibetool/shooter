@@ -21,6 +21,22 @@ const canBuy = wi => wi < ORANGE_N || (allOrange() && (wi === ORANGE_N || !!SAVE
 const dmgMul = () => (SAVE && SAVE.cleared[8] ? 1.5 : 1);
 const hasAutoGun = () => !!(SAVE && SAVE.cleared[8]);
 const AUTO_GUN = 1, AUTO_GUN_CD = 2; // Long Pistol, one shot every 2 seconds
+/* Upgrade menu: three tracks of five levels, bought in order. Every track costs the same per level. */
+const UPG_PRICES = [30, 50, 60, 70, 80];
+const regenEvery = lvl => 8 - 1.5 * (lvl - 1);                    // seconds per 1 health
+const fighterCd = lvl => Math.max(0.25, 2 - 0.5 * (lvl - 1));     // fighter knife cooldown (floored so it never hits 0)
+const skillEvery = lvl => 10 - 2 * (lvl - 1);                     // seconds between strikes
+const UPGRADES = [
+  { key: 'regen', name: 'Regen', icon: ['tiles', 222], steps: ['Buy Regen', 'Faster Regen', 'Faster Regen', 'Faster Regen', 'Faster Regen'],
+    info: l => (l ? `Heals 1 health every ${regenEvery(l)} s during battle.` : 'Slowly heals you during battle.'),
+    step: i => (i === 0 ? 'Heal 1 health every 8 s during battle' : `Heal every ${regenEvery(i + 1)} s instead of ${regenEvery(i)} s`) },
+  { key: 'fighter', name: 'Fighter', icon: ['players', 8], steps: ['Hire Fighter', 'Upgrade Fighter', 'Upgrade Fighter', 'Upgrade Fighter', 'Upgrade Fighter'],
+    info: l => (l ? `Pip\u2019s twin hunts monsters with an orange knife every ${fighterCd(l)} s. It can\u2019t be hurt.` : 'A fighter that looks like Pip and hunts monsters with an orange knife.'),
+    step: i => (i === 0 ? 'Joins every run, knife every 2 s, cannot be hurt' : `Knife every ${fighterCd(i + 1)} s instead of ${fighterCd(i)} s`) },
+  { key: 'skill', name: 'Skill', icon: ['ui', 55], steps: ['Buy Skill', 'Upgrade Skill', 'Upgrade Skill', 'Upgrade Skill', 'Upgrade Skill'],
+    info: l => (l ? `Every ${skillEvery(l)} s the monster with the most health turns yellow and vanishes. Not bosses.` : 'Makes the toughest monster vanish every few seconds. Not bosses.'),
+    step: i => (i === 0 ? 'Every 10 s the toughest monster vanishes' : `Every ${skillEvery(i + 1)} s instead of ${skillEvery(i)} s`) }
+];
 const KNIFE = { name: 'Knife', tile: 8, dmg: 2.5, rate: 2.5, range: 26, autoCd: 2 }; // autoCd: seconds between automatic strikes
 
 const MONSTERS = {

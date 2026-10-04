@@ -23,6 +23,8 @@ class Play {
     this.cam = { x: 0, y: 0 }; this.shake = 0;
     this.flow = new Int16Array(m.W * m.H); this.flowT = 0; this.flowCell = -1; this.q = new Int32Array(m.W * m.H);
     this.portal = null;
+    this.upg = { regen: SAVE.upg.regen, fighter: SAVE.upg.fighter, skill: SAVE.upg.skill };
+    this.regenT = 0; this.skillT = 0; this.ally = null;
     this.banner = { lines: ['LEVEL ' + this.L], sub: this.def.name, t: 2.2, kind: 'red' };
     this.paused = false; this.result = null; this.hot = []; this.saveT = 0;
     this.tMove = null; this.tAim = null;
@@ -62,9 +64,11 @@ class Play {
     for (let k = 1; k < n; k++) { const x = lerp(x0, x1, k / n), y = lerp(y0, y1, k / n); if (m.solid[this.cell(x, y)] & 2) return false; }
     return true;
   }
-  computeFlow() {
-    const m = this.map, W = m.W, f = this.flow, q = this.q; f.fill(-1);
-    const s = this.cell(this.p.x, this.p.y); f[s] = 0; let qh = 0, qt = 0; q[qt++] = s;
+  computeFlow() { this.flowCell = this.bfs(this.cell(this.p.x, this.p.y), this.flow); }
+  /* walking distance (in cells) from one cell to every reachable cell, honoring heights and ramps */
+  bfs(s, f) {
+    const m = this.map, W = m.W, q = this.q; f.fill(-1);
+    f[s] = 0; let qh = 0, qt = 0; q[qt++] = s;
     while (qh < qt) {
       const i = q[qh++], x = i % W, ha = m.hgt[i];
       const nb = [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, i - W, i + W];
@@ -74,10 +78,11 @@ class Play {
         f[j] = f[i] + 1; q[qt++] = j;
       }
     }
-    this.flowCell = s;
+    return s;
   }
-  flowDir(e) {
-    const m = this.map, W = m.W, i = this.cell(e.x, e.y), f = this.flow;
+  flowDir(e) { return this.flowDirOn(e, this.flow, this.p.x, this.p.y); }
+  flowDirOn(e, f, gx, gy) {
+    const m = this.map, W = m.W, i = this.cell(e.x, e.y);
     let best = f[i] < 0 ? 1e9 : f[i], bi = -1;
     const x = i % W;
     for (const j of [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, i - W, i + W]) {
@@ -85,7 +90,7 @@ class Play {
       if (!this.passable(j, e)) continue;
       if (f[j] < best) { best = f[j]; bi = j; }
     }
-    if (bi < 0) { const dx = this.p.x - e.x, dy = this.p.y - e.y, d = Math.hypot(dx, dy) || 1; return [dx / d, dy / d]; }
+    if (bi < 0) { const dx = gx - e.x, dy = gy - e.y, d = Math.hypot(dx, dy) || 1; return [dx / d, dy / d]; }
     const tx = (bi % W) * T + 8, ty = Math.floor(bi / W) * T + 9, dx = tx - e.x, dy = ty - e.y, d = Math.hypot(dx, dy) || 1;
     return [dx / d, dy / d];
   }
@@ -194,6 +199,70 @@ class Play {
     this.bullets.push({ x: ox, y: oy, vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, life: w.life, dmg: w.dmg * dmgMul(), kind: w.kind, pierce: 0, splash: 0, hit: [], wi: -3 });
     sfx(w.sfx, 0.35, 1.1, 0.02);
   }
+  /* upgrades bought in town: regen, the fighter and the vanishing skill */
+  upgradesTick(dt) {
+    const p = this.p, u = this.upg;
+    if (u.regen) {
+      if (p.hp >= p.maxHp) this.regenT = 0;
+      else if ((this.regenT += dt) >= regenEvery(u.regen)) {
+        this.regenT = 0; p.hp = Math.min(p.maxHp, p.hp + 1);
+        this.nums.push({ x: p.x, y: p.y - 22, t: 0.8, v: '+1', col: P.teal });
+      }
+    }
+    if (u.fighter) { if (!this.ally) this.spawnAlly(); this.updAlly(dt); }
+    if (u.skill && (this.skillT += dt) >= skillEvery(u.skill)) {
+      let best = null;
+      for (const e of this.ents) if (!e.dead && !e.boss && !(e.zap > 0) && (!best || e.hp > best.hp)) best = e;
+      if (best) { best.zap = 0.6; this.skillT = 0; sfx('select-a', 0.7, 0.7); }
+    }
+  }
+  vanish(e) {
+    this.spark(e.x, e.y - 8 * e.scale, 14, P.yel); this.spark(e.x, e.y - 8 * e.scale, 8, P.yelL);
+    sfx('coin-c', 0.5, 1.6);
+    this.kill(e, -5, true); e.deadT = 0;
+  }
+  spawnAlly() {
+    const p = this.p;
+    this.ally = { x: p.x, y: p.y, h: p.h, ramp: p.ramp, face: 1, anim: 0, moving: false, target: null, cd: 0.5, swingT: 0, swingA: 0, flowT: 0, flowCell: -1, lost: 0, chase: 0 };
+    this.aflow = new Int16Array(this.map.W * this.map.H);
+  }
+  /* the fighter picks a random monster, runs to it and swings its orange knife; monsters ignore it */
+  updAlly(dt) {
+    const a = this.ally, p = this.p;
+    a.anim += dt; a.cd = Math.max(0, a.cd - dt); a.swingT = Math.max(0, a.swingT - dt);
+    if (a.target && (a.target.dead || a.target.zap > 0 || (a.chase += dt) > 6)) a.target = null;
+    if (!a.target) { const live = this.ents.filter(e => !e.dead && !(e.zap > 0)); if (live.length) { a.target = pick(R, live); a.flowT = 0; a.lost = 0; a.chase = 0; } }
+    let tx = p.x - 14, ty = p.y, f = this.flow;
+    if (a.target) {
+      const e = a.target, tc = this.cell(e.x, e.y); tx = e.x; ty = e.y;
+      a.flowT -= dt; if (a.flowT <= 0 || tc !== a.flowCell) { a.flowCell = this.bfs(tc, this.aflow); a.flowT = 0.4; }
+      f = this.aflow;
+      if (f[this.cell(a.x, a.y)] < 0 && (a.lost += dt) > 0.5) a.target = null;
+    }
+    const dx = tx - a.x, dy = ty - a.y, d = Math.hypot(dx, dy) || 1;
+    const stop = a.target ? 12 + 4 * a.target.scale : 18;
+    let mx = 0, my = 0;
+    if (d > stop) {
+      if (d < 40 && this.los(a.x, a.y - 6, tx, ty - 6)) { mx = dx / d; my = dy / d; }
+      else [mx, my] = this.flowDirOn(a, f, tx, ty);
+    }
+    a.moving = Math.hypot(mx, my) > 0.1;
+    if (a.moving) { this.move(a, mx * 72 * dt, my * 72 * dt, 4); a.face = mx >= 0 ? 1 : -1; }
+    if (a.target && a.cd <= 0) {
+      const e = a.target, ex = e.x - a.x, ey = (e.y - 6 * e.scale) - (a.y - 6);
+      if (Math.hypot(ex, ey) < KNIFE.range + 6 * e.scale) {
+        const ang = Math.atan2(ey, ex);
+        a.cd = fighterCd(this.upg.fighter); a.swingT = 0.2; a.swingA = ang; a.face = ex >= 0 ? 1 : -1; a.chase = 0;
+        sfx('jump-f', 0.4, 1.35);
+        for (const o of this.ents) {
+          if (o.dead || o.zap > 0) continue;
+          const ox = o.x - a.x, oy = (o.y - 6 * o.scale) - (a.y - 6), od = Math.hypot(ox, oy);
+          if (od < KNIFE.range + 6 * o.scale && (Math.abs(angDiff(Math.atan2(oy, ox), ang)) < 1.2 || od < 12)) this.damage(o, KNIFE.dmg * dmgMul(), -4, Math.cos(ang) * 160, Math.sin(ang) * 160);
+        }
+      }
+    }
+    if (!a.target && Math.hypot(p.x - a.x, p.y - a.y) > 220) { a.x = p.x; a.y = p.y; a.h = p.h; a.ramp = p.ramp; }
+  }
   damage(e, dmg, wi, kx, ky) {
     if (e.dead) return;
     e.hp -= dmg; e.flash = 0.09;
@@ -202,15 +271,14 @@ class Play {
     sfx('hurt-d', 0.32, 1.1 + R() * 0.25, 0.05);
     if (e.hp <= 0) this.kill(e, wi);
   }
-  kill(e, wi) {
+  kill(e, wi, quiet) {
     e.dead = true; e.deadT = 0.8;
     if (!e.boss && !e.minion) this.killed++;
     this.killsRun++; SAVE.stats.kills++;
     questEvent({ k: 'kill', mon: e.type, L: this.L, w: wi });
     const n = goldPerKill(this.L);
     for (let k = 0; k < n; k++) this.dropCoin(e.x, e.y - 4);
-    this.puff(e.x, e.y - 4, 10, P.lavD, 45);
-    sfx('hurt-c', 0.5, 0.9 + R() * 0.2, 0.05);
+    if (!quiet) { this.puff(e.x, e.y - 4, 10, P.lavD, 45); sfx('hurt-c', 0.5, 0.9 + R() * 0.2, 0.05); }
     if (e.boss) {
       this.bossDead = true; SAVE.stats.bosses++; questEvent({ k: 'boss', L: this.L });
       this.shake = 12; sfx('explosion-a', 0.9);
@@ -264,6 +332,7 @@ class Play {
       if (firing && this.state !== 'dead') this.fire();
       this.autoKnife();
       if (hasAutoGun() && this.state === 'play') this.autoShot(dt);
+      if (this.state === 'play') this.upgradesTick(dt);
     }
     // timers
     p.cd = Math.max(0, p.cd - dt); p.knifeCd = Math.max(0, p.knifeCd - dt); p.autoKnifeCd = Math.max(0, p.autoKnifeCd - dt); p.knifeT = Math.max(0, p.knifeT - dt);
@@ -388,6 +457,7 @@ class Play {
   }
   updEnemy(e, dt) {
     if (e.dead) { e.deadT -= dt; return; }
+    if (e.zap > 0) { e.zap -= dt; if (e.zap <= 0) this.vanish(e); return; }
     const p = this.p, D = e.D;
     e.anim += dt; e.flash = Math.max(0, e.flash - dt); e.cd -= dt;
     const dx = p.x - e.x, dy = p.y - e.y, d = Math.hypot(dx, dy) || 1;
@@ -547,16 +617,16 @@ class Play {
       spr('tiles', 225, Math.round(c.x) - 8, Math.round(c.y - c.z) - 8);
     }
     // entities, y-sorted
-    const list = this.ents.slice(); list.push(p);
+    const list = this.ents.slice(); list.push(p); if (this.ally) list.push(this.ally);
     list.sort((a, b) => a.y - b.y);
-    for (const e of list) { if (e === p) this.drawPlayer(); else this.drawEnemy(e); }
+    for (const e of list) { if (e === p) this.drawPlayer(); else if (e === this.ally) this.drawAlly(); else this.drawEnemy(e); }
     ctx.drawImage(m.over, 0, 0);
     // bullets
     for (const b of this.bullets) this.drawBullet(b, false);
     for (const b of this.ebullets) this.drawBullet(b, true);
     for (const q of this.parts) { ctx.globalAlpha = clamp(q.t / q.max * 1.5, 0, 1); ctx.fillStyle = q.col; const s = q.size; ctx.fillRect(Math.round(q.x - s / 2), Math.round(q.y - s / 2), s, s); }
     ctx.globalAlpha = 1;
-    for (const n of this.nums) { ctx.globalAlpha = clamp(n.t / 0.3, 0, 1); stextO(String(n.v), n.x, n.y, 6, P.white, P.dark, 'center', 700, 2); }
+    for (const n of this.nums) { ctx.globalAlpha = clamp(n.t / 0.3, 0, 1); stextO(String(n.v), n.x, n.y, 6, n.col || P.white, P.dark, 'center', 700, 2); }
     ctx.globalAlpha = 1;
     this.drawHud();
   }
@@ -585,6 +655,15 @@ class Play {
     const w = WEAPONS[p.wi], rec = p.cd > 0 ? p.cd * w.rate * 2 : 0;
     spr('weapons', w.tile, p.x + Math.cos(p.aim) * (7 - rec) - 12, p.y - 6 + Math.sin(p.aim) * (7 - rec) - 12, { rot: p.aim, flipY: left });
   }
+  drawAlly() {
+    const a = this.ally;
+    ctx.fillStyle = 'rgba(71,50,75,0.25)'; ctx.beginPath(); ctx.ellipse(a.x, a.y + 3, 6, 2.2, 0, 0, TAU); ctx.fill();
+    const fr = 8 + (a.swingT > 0 ? 2 : a.moving ? Math.floor(a.anim * 8) % 2 : Math.floor(a.anim * 1.6) % 2);
+    spr('players', fr, Math.round(a.x) - 12, Math.round(a.y) - 20, a.face < 0 ? { flip: true } : null);
+    const base = a.swingT > 0 ? a.swingA : (a.face > 0 ? 0.5 : Math.PI - 0.5), left = Math.cos(base) < 0;
+    const swing = a.swingT > 0 ? (1 - a.swingT / 0.2) * 2.2 - 1.1 : 0.5, ka = base + (left ? -swing : swing);
+    spr('weapons', KNIFE.tile, a.x + Math.cos(ka) * 9 - 12, a.y - 7 + Math.sin(ka) * 9 - 12, { rot: ka + Math.PI / 2 });
+  }
   drawEnemy(e) {
     const D = e.D, sc = e.scale;
     if (e.dead && Math.floor(e.deadT * 12) % 2) return;
@@ -592,7 +671,7 @@ class Play {
     let fr = D.f + (e.moving ? (Math.floor(e.anim * (D.ai === 'fly' ? 10 : 6)) % 2) : (Math.floor(e.anim * 2) % 2));
     if (e.boss && e.charge > 0.5) fr = D.f + 2;
     if (e.dead) fr = D.f + 3;
-    const sheet = e.flash > 0 && !e.dead ? D.sheet + 'W' : D.sheet;
+    const sheet = e.zap > 0 ? D.sheet + 'Y' : e.flash > 0 && !e.dead ? D.sheet + 'W' : D.sheet;
     const bob = D.ai === 'fly' && !e.dead ? Math.round(Math.sin(e.anim * 6) * 1.5) - 4 : 0;
     const x = Math.round(e.x - 12 * sc), y = Math.round(e.y + 4 - 24 * sc) + bob;
     spr(sheet, fr, x, y, { flip: e.face < 0, scale: sc });

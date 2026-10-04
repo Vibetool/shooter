@@ -102,6 +102,11 @@ class Home extends MenuScene {
     npcDraw('cat', 129, 81, 134, 64, false);
     npcDraw('mouse', 160, 76, 164, 59, true);
 
+    // upgrade button (grey panel from the pack)
+    const up = this.hit(62, 34, 77, 24, () => pushScene(new UpgradeMenu()), ['Upgrade', 'Regen, a fighter and a skill', 'that help you during runs.']);
+    smallPanel(62, 34 - (up ? 1 : 0), 77, 24);
+    stext('Upgrade', 100.5, 46 - (up ? 1 : 0), BTN_FONT, P.white, 'center', 600);
+
     // square map (yellow)
     ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.fillRect(200, 39, 48, 48);
     const sq = [3, 4, 5, 21, 22, 23, 39, 40, 41];
@@ -214,6 +219,52 @@ function armoryClick(wi) {
   }));
 }
 function openLevels() { pushScene(new Levels()); }
+function upgradeClick(u, i) {
+  const lvl = SAVE.upg[u.key], price = UPG_PRICES[i];
+  if (i < lvl) { Game.toast(u.steps[i] + ' is already yours'); return; }
+  if (i > lvl) { sfx('error-a'); Game.toast('Buy the earlier ' + u.name.toLowerCase() + ' upgrade first'); return; }
+  if (SAVE.gold < price) { sfx('error-a'); Game.toast(`${u.steps[i]} costs ${price} gold. You have ${SAVE.gold}.`); return; }
+  pushScene(new Confirm(u.steps[i] + '?', `${price} gold. You have ${SAVE.gold}.`, 'Buy', () => {
+    SAVE.gold -= price; SAVE.stats.goldSpent += price; SAVE.upg[u.key] = i + 1; persist();
+    sfx('coin-d'); Game.toast(u.steps[i] + ' bought');
+  }));
+}
+
+/* ---------------- UPGRADE menu (red banner panel, three tracks) ---------------- */
+class UpgradeMenu extends MenuScene {
+  key(k) { if (k === 'escape') popScene(this); }
+  outside() { popScene(this); }
+  draw() {
+    dim(); this.begin();
+    const x = 36, y = 18, w = 388, h = 222;
+    this.hit(x, y, w, h, () => {});
+    panel('red', x, y, w, h);
+    ptext('UPGRADE', x + w / 2, y + 10, 'B', 'center');
+    spr('tiles', 225, x + w - 70, y + 9); ptext(String(SAVE.gold), x + w - 55, y + 10, 'A');
+    UPGRADES.forEach((u, r) => {
+      const lvl = SAVE.upg[u.key], y0 = y + 32 + r * 52;
+      if (u.icon[0] === 'players') spr('players', u.icon[1], x + 10, y0 - 1); else spr(u.icon[0], u.icon[1], x + 14, y0 + 4);
+      stext(u.name, x + 40, y0 + 8, 7, P.white, 'left', 700);
+      stext(lvl ? `Level ${lvl} / 5` : 'Not bought', x + 40, y0 + 18, 4.8, P.yelL, 'left', 600);
+      for (let i = 0; i < 5; i++) {
+        const nx = x + 118 + i * 52, nw = 46, nh = 24, owned = i < lvl, next = i === lvl;
+        const tip = [u.steps[i], u.step(i), owned ? 'Owned' : `${UPG_PRICES[i]} gold` + (next ? (SAVE.gold >= UPG_PRICES[i] ? '. Click to buy.' : ` (you have ${SAVE.gold})`) : '. Buy the earlier upgrade first.')];
+        const on = this.hit(nx, y0, nw, nh, () => upgradeClick(u, i), tip);
+        const ny = y0 - (on && next ? 1 : 0);
+        ctx.globalAlpha = owned || next ? 1 : 0.5;
+        btn('grey', nx, ny, nw, nh);
+        stext(u.steps[i], nx + nw / 2, ny + 8.5, 4.3, P.dark, 'center', 700);
+        stext(owned ? 'Owned' : `${UPG_PRICES[i]} gold`, nx + nw / 2, ny + 16, 4.6, owned ? P.redD : P.dark, 'center', 700);
+        ctx.globalAlpha = 1;
+        if (next && on) spr('ui', 104, nx + nw - 15, ny + nh - 15);
+      }
+      bar(x + 118, y0 + 28, 254, 9, lvl / 5, 'yellow', 5);
+      stext(u.info(lvl), x + 118, y0 + 43, 4.8, P.white, 'left', 500);
+    });
+    textButton(this, 'grey', x + w / 2 - 32, y + h - 30, 64, 21, 'Done', () => popScene(this));
+    this.end();
+  }
+}
 
 /* ---------------- generic confirm ---------------- */
 class Confirm extends MenuScene {
@@ -362,6 +413,7 @@ class Credits extends MenuScene {
     }
     // job tiers
     stext('Job difficulty', x + 16, y + 148, 6.4, P.dark, 'left', 700);
+    stext('Upgrades: ' + UPGRADES.map(u => `${u.name} ${SAVE.upg[u.key]}/5`).join(', '), x + w - 16, y + 148, 5.4, P.dark, 'right', 600);
     ['cat', 'mouse'].forEach((id, k) => {
       const n = SAVE.npcs[id], tier = Math.min(n.count, MAX_TIER);
       stext(`${NPCS[id].name} ${NPCS[id].title}`, x + 16, y + 160 + k * 14, 5.4, P.dark, 'left', 600);
