@@ -4,7 +4,7 @@
    Art & sound: Kenney "Desert Shooter Pack" (CC0)
    ========================================================================== */
 const MW = 460, MH = 258, T = 16;
-const QUEST_MS = 20 * 60 * 1000;
+const QUEST_MS = 10 * 60 * 1000; // Pip's job cooldown
 const P = {
   dark: '#47324b', white: '#ffffff', red: '#dd674c', redL: '#f78d68', redD: '#b94f37',
   lav: '#999ac4', lavL: '#c3c6e9', lavD: '#81759b', yel: '#ffb84c', yelL: '#ffde8c', yelD: '#ec9a1e',
@@ -348,7 +348,7 @@ const Cloud = {
           if (remote && (remote.savedAt || 0) > (SAVE.savedAt || 0)) {
             SAVE = normalizeSave(remote);
             try { localStorage.setItem(SAVE_KEY, JSON.stringify(SAVE)); } catch (e) { /* ignore */ }
-            applyVolumes();
+            applyVolumes(); pageOpenJobs();
           }
         }
       }

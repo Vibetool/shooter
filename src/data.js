@@ -219,20 +219,25 @@ function makeQuest(npcId) {
   if (q.type === 'clear' || q.type === 'boss' || q.type === 'flawless') q.n = 1;
   return q;
 }
-/* quest timer: each NPC offers a job every 20 minutes (one open job at a time) */
+/* job timing: Mira (cat) hands out a job every time the game is opened,
+   Pip (mouse) finds one every 10 minutes. Each keeps at most one open job. */
+function pageOpenJobs() {
+  if (!SAVE) return;
+  const mz = SAVE.npcs.mouse;
+  mz.next = Math.min(mz.next, Date.now() + QUEST_MS); // older saves waited 20 minutes
+  const cat = SAVE.npcs.cat;
+  if (!cat.quest) { cat.quest = makeQuest('cat'); if (Game.toast) Game.toast(NPCS.cat.name + ' has a new job for you'); }
+  persist();
+}
 function questTick() {
   if (!SAVE) return;
-  const now = Date.now(); let changed = false;
-  for (const id of ['cat', 'mouse']) {
-    const n = SAVE.npcs[id];
-    if (!n.quest && now >= n.next) {
-      n.quest = makeQuest(id);
-      n.next = Math.max(now, n.next) + QUEST_MS;
-      changed = true;
-      if (Game.toast) Game.toast(NPCS[id].name + ' has a new job for you');
-    }
+  const now = Date.now(), n = SAVE.npcs.mouse;
+  if (!n.quest && now >= n.next) {
+    n.quest = makeQuest('mouse');
+    n.next = Math.max(now, n.next) + QUEST_MS;
+    if (Game.toast) Game.toast(NPCS.mouse.name + ' has a new job for you');
+    persist();
   }
-  if (changed) persist();
 }
 function questEvent(ev) {
   for (const id of ['cat', 'mouse']) {

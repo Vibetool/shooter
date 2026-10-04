@@ -36,7 +36,7 @@ const ASSETS = {"img":{"enemies":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA
    Art & sound: Kenney "Desert Shooter Pack" (CC0)
    ========================================================================== */
 const MW = 460, MH = 258, T = 16;
-const QUEST_MS = 20 * 60 * 1000;
+const QUEST_MS = 10 * 60 * 1000; // Pip's job cooldown
 const P = {
   dark: '#47324b', white: '#ffffff', red: '#dd674c', redL: '#f78d68', redD: '#b94f37',
   lav: '#999ac4', lavL: '#c3c6e9', lavD: '#81759b', yel: '#ffb84c', yelL: '#ffde8c', yelD: '#ec9a1e',
@@ -380,7 +380,7 @@ const Cloud = {
           if (remote && (remote.savedAt || 0) > (SAVE.savedAt || 0)) {
             SAVE = normalizeSave(remote);
             try { localStorage.setItem(SAVE_KEY, JSON.stringify(SAVE)); } catch (e) { /* ignore */ }
-            applyVolumes();
+            applyVolumes(); pageOpenJobs();
           }
         }
       }
@@ -621,20 +621,25 @@ function makeQuest(npcId) {
   if (q.type === 'clear' || q.type === 'boss' || q.type === 'flawless') q.n = 1;
   return q;
 }
-/* quest timer: each NPC offers a job every 20 minutes (one open job at a time) */
+/* job timing: Mira (cat) hands out a job every time the game is opened,
+   Pip (mouse) finds one every 10 minutes. Each keeps at most one open job. */
+function pageOpenJobs() {
+  if (!SAVE) return;
+  const mz = SAVE.npcs.mouse;
+  mz.next = Math.min(mz.next, Date.now() + QUEST_MS); // older saves waited 20 minutes
+  const cat = SAVE.npcs.cat;
+  if (!cat.quest) { cat.quest = makeQuest('cat'); if (Game.toast) Game.toast(NPCS.cat.name + ' has a new job for you'); }
+  persist();
+}
 function questTick() {
   if (!SAVE) return;
-  const now = Date.now(); let changed = false;
-  for (const id of ['cat', 'mouse']) {
-    const n = SAVE.npcs[id];
-    if (!n.quest && now >= n.next) {
-      n.quest = makeQuest(id);
-      n.next = Math.max(now, n.next) + QUEST_MS;
-      changed = true;
-      if (Game.toast) Game.toast(NPCS[id].name + ' has a new job for you');
-    }
+  const now = Date.now(), n = SAVE.npcs.mouse;
+  if (!n.quest && now >= n.next) {
+    n.quest = makeQuest('mouse');
+    n.next = Math.max(now, n.next) + QUEST_MS;
+    if (Game.toast) Game.toast(NPCS.mouse.name + ' has a new job for you');
+    persist();
   }
-  if (changed) persist();
 }
 function questEvent(ev) {
   for (const id of ['cat', 'mouse']) {
@@ -1136,7 +1141,7 @@ class Home extends MenuScene {
 }
 function npcTip(id) {
   const n = SAVE.npcs[id], q = n.quest, N = NPCS[id];
-  if (!q) return [N.name + ' ' + N.title, 'Next job in ' + fmtTime(n.next - Date.now())];
+  if (!q) return [N.name + ' ' + N.title, id === 'cat' ? 'New job the next time you open the game' : 'Next job in ' + fmtTime(n.next - Date.now())];
   if (q.status === 'offered') return [N.name + ' ' + N.title, 'Has a new job for you!'];
   if (q.status === 'done') return [N.name + ' ' + N.title, 'Job done. Click to claim ' + q.reward + ' gold.'];
   return [N.name + ' ' + N.title, questText(q).goal, `Progress ${q.prog} / ${q.n}`];
@@ -1145,7 +1150,7 @@ function radarTip() {
   const out = ['Job radar'];
   for (const id of ['cat', 'mouse']) {
     const n = SAVE.npcs[id], q = n.quest;
-    out.push(NPCS[id].name + ': ' + (!q ? 'next job in ' + fmtTime(n.next - Date.now()) : q.status === 'offered' ? 'new job waiting' : q.status === 'done' ? 'reward ready' : `${q.prog}/${q.n} ${questText(q).goal.toLowerCase()}`));
+    out.push(NPCS[id].name + ': ' + (!q ? (id === 'cat' ? 'new job next time you open the game' : 'next job in ' + fmtTime(n.next - Date.now())) : q.status === 'offered' ? 'new job waiting' : q.status === 'done' ? 'reward ready' : `${q.prog}/${q.n} ${questText(q).goal.toLowerCase()}`));
   }
   return out;
 }
@@ -1360,7 +1365,7 @@ class NpcDialog extends MenuScene {
     if (!q) {
       para('“' + CHATTER[id][n.count % CHATTER[id].length] + '”');
       yy += 6;
-      para('Next job in ' + fmtTime(n.next - Date.now()) + '. A new job comes every 20 minutes.', 5.4, 600);
+      para(id === 'cat' ? 'I\u2019ll have a new job for you the next time you open the game.' : 'Next job in ' + fmtTime(n.next - Date.now()) + '. I find a new job every 10 minutes.', 5.4, 600);
       textButton(this, 'red', x + w / 2 - 30, y + h - 32, 60, 21, 'OK', () => popScene(this));
     } else {
       const tx = questText(q);
@@ -1380,7 +1385,7 @@ class NpcDialog extends MenuScene {
         stext(`${q.prog} / ${q.n}`, bx + 156, yy + 5.5, 5.6, P.dark, 'left', 700);
         textButton(this, 'red', x + w / 2 - 70, y + h - 32, 64, 21, 'On it', () => popScene(this));
         textButton(this, 'grey', x + w / 2 + 6, y + h - 32, 64, 21, 'Drop job', () => {
-          pushScene(new Confirm('Drop this job?', 'The next job still waits for its timer.', 'Drop', () => { n.quest = null; persist(); popScene(this); }));
+          pushScene(new Confirm('Drop this job?', id === 'cat' ? 'Mira has a new one next time you open the game.' : 'Pip\u2019s next job still waits for its timer.', 'Drop', () => { n.quest = null; persist(); popScene(this); }));
         });
       } else {
         bar(bx, yy, 150, 11, 1, 'blue');
@@ -2134,7 +2139,7 @@ async function boot(hotData) {
   try { await Promise.race([document.fonts.load('600 20px Poppins'), new Promise(r => setTimeout(r, 1500))]); } catch (e) { /* fallback font */ }
   calibrateFont();
   const bootEl = document.getElementById('boot'); if (bootEl) bootEl.remove();
-  questTick();
+  pageOpenJobs(); questTick();
   setScene(new Home());
   Cloud.init();
   setInterval(questTick, 1000);
