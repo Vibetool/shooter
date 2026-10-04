@@ -306,7 +306,7 @@ let SAVE = null;
 function defaultSave() {
   const now = Date.now();
   return {
-    v: 1, created: now, savedAt: 0, gold: 0, owned: [0, 0, 0, 0, 0, 0, 0, 0], equipped: -1, page: 0,
+    v: 1, created: now, savedAt: 0, gold: 0, owned: new Array(16).fill(0), equipped: -1, page: 0,
     cleared: new Array(50).fill(0), best: new Array(50).fill(0),
     stats: { kills: 0, goldEarned: 0, goldSpent: 0, chests: 0, deaths: 0, quests: 0, bosses: 0, playTime: 0, runs: 0 },
     npcs: { cat: { next: now, quest: null, count: 0 }, mouse: { next: now + QUEST_MS, quest: null, count: 0 } },

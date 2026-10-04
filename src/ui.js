@@ -123,13 +123,13 @@ class Home extends MenuScene {
     bar(66, 124, 52, 12, 1, 'red', 3);
     ptext('100%', 122, 122, 'A');
     this.hit(66, 122, 92, 16, null, ['Health 100%', 'You heal fully in town between runs.', 'Every run also starts with a 1-point shield.']);
-    const clearedN = SAVE.cleared.filter(Boolean).length, ownedN = SAVE.owned.filter(Boolean).length;
+    const ao = allOrange(), ownedN = SAVE.owned.slice(ao ? ORANGE_N : 0, ao ? WEAPONS.length : ORANGE_N).filter(Boolean).length;
     const unl = highestUnlocked(), nb = Math.ceil(unl / 5) * 5;
     let stretch = 0; for (let L = nb - 4; L <= nb; L++) if (SAVE.cleared[L - 1]) stretch++;
     bar(66, 140, 64, 12, stretch / 5, 'blue');
     this.hit(66, 140, 64, 12, null, ['Road to the next boss', `Boss waits at Level ${nb}`, `${stretch} of the 5 levels on this stretch cleared`]);
-    bar(66, 155, 64, 12, ownedN / 8, 'blue');
-    this.hit(66, 155, 64, 12, null, ['Arsenal', `${ownedN} / 8 weapons owned`]);
+    bar(66, 155, 64, 12, ownedN / ORANGE_N, 'blue');
+    this.hit(66, 155, 64, 12, null, [ao ? 'Green arsenal' : 'Arsenal', `${ownedN} / ${ORANGE_N} ${ao ? 'green' : 'orange'} weapons owned`]);
 
     // villain banner
     panel('red', 152, 159, 143, 53);
@@ -152,28 +152,30 @@ class Home extends MenuScene {
   }
   drawArmory() {
     panel('blue', 285, 57, 83, 68);
-    const page = SAVE.page || 0;
+    const ao = allOrange(), maxPage = ao ? WEAPONS.length / 4 - 1 : ORANGE_N / 4 - 1;
+    const page = clamp(SAVE.page || 0, 0, maxPage); SAVE.page = page;
     for (let k = 0; k < 4; k++) {
-      const wi = page * 4 + k, W_ = WEAPONS[wi], [x, y] = SLOTS[k], owned = SAVE.owned[wi];
+      const wi = page * 4 + k, W_ = WEAPONS[wi], [x, y] = SLOTS[k], owned = SAVE.owned[wi], ok = canBuy(wi);
       const on = this.hit(x + 2, y + 4, 21, 17, () => armoryClick(wi), weaponTip(wi));
-      spr('weapons', W_.tile, x, y - (on ? 1 : 0), owned ? null : { alpha: 0.6 });
+      spr('weapons', W_.tile, x, y - (on ? 1 : 0), owned ? null : { alpha: ok ? 0.6 : 0.3 });
       if (!owned) {
         const s = String(W_.price), w = textW(s, 4.6, 700) + 4;
         ctx.fillStyle = P.dark; ctx.fillRect(x + 21 - w, y + 15, w, 7);
-        stext(s, x + 21 - w / 2, y + 18.7, 4.6, SAVE.gold >= W_.price ? P.yel : P.lavL, 'center', 700);
+        stext(s, x + 21 - w / 2, y + 18.7, 4.6, !ok ? P.lav : SAVE.gold >= W_.price ? P.yel : P.lavL, 'center', 700);
       }
       if (on) spr('ui', 104, x + 4, y + 3);
     }
     const eq = SAVE.equipped;
     if (eq >= 0 && Math.floor(eq / 4) === page) { const [x, y] = SLOTS[eq % 4]; spr('ui', 77, x + 6, y + 17 + Math.round(Math.sin(this.t * 4))); }
     // page arrows on the frame
-    const l = this.hit(279, 83, 12, 16, () => { SAVE.page = 0; }, ['Armory page 1', 'Pistol to SMG']);
-    const r = this.hit(362, 83, 12, 16, () => { SAVE.page = 1; }, ['Armory page 2', 'Sniper to Shotgun']);
-    spr('ui', 74, 277 - (l ? 1 : 0), 83, { rot: -Math.PI / 2, alpha: page === 0 ? 0.55 : 1 });
-    spr('ui', 74, 360 + (r ? 1 : 0), 83, { rot: Math.PI / 2, alpha: page === 1 ? 0.55 : 1 });
-    ctx.fillStyle = P.dark; ctx.fillRect(320, 117, 13, 3);
-    ctx.fillStyle = page === 0 ? P.white : P.lav; ctx.fillRect(321, 118, 5, 1);
-    ctx.fillStyle = page === 1 ? P.white : P.lav; ctx.fillRect(327, 118, 5, 1);
+    const prev = page > 0, next = page < maxPage;
+    const l = this.hit(279, 83, 12, 16, prev ? () => { SAVE.page = page - 1; } : null, prev ? ['Previous page'] : null);
+    const r = this.hit(362, 83, 12, 16, next ? () => { SAVE.page = page + 1; } : null, next ? ['Next page'] : ao ? null : ['More weapons', 'Own every orange weapon to unlock more.']);
+    spr('ui', 74, 277 - (l && prev ? 1 : 0), 83, { rot: -Math.PI / 2, alpha: prev ? 1 : 0.55 });
+    spr('ui', 74, 360 + (r && next ? 1 : 0), 83, { rot: Math.PI / 2, alpha: next ? 1 : 0.55 });
+    const n = maxPage + 1, dw = n * 6 + 1, dx = Math.round(326.5 - dw / 2);
+    ctx.fillStyle = P.dark; ctx.fillRect(dx, 117, dw, 3);
+    for (let i = 0; i < n; i++) { ctx.fillStyle = i === page ? P.white : i * 4 >= ORANGE_N ? P.teal : P.lav; ctx.fillRect(dx + 1 + i * 6, 118, 5, 1); }
   }
 }
 function npcTip(id) {
@@ -194,12 +196,17 @@ function radarTip() {
 function weaponTip(wi) {
   const w = WEAPONS[wi], owned = SAVE.owned[wi];
   const dps = (w.dmg * w.pellets * w.rate).toFixed(0);
-  return [w.name, owned ? (SAVE.equipped === wi ? 'Equipped' : 'Owned. Click to equip.') : `Price: ${w.price} gold` + (SAVE.gold >= w.price ? '. Click to buy.' : ` (you have ${SAVE.gold})`),
+  const status = owned ? (SAVE.equipped === wi ? 'Equipped' : 'Owned. Click to equip.')
+    : !canBuy(wi) ? `${w.price} gold. ` + lockReason(wi)
+    : `Price: ${w.price} gold` + (SAVE.gold >= w.price ? '. Click to buy.' : ` (you have ${SAVE.gold})`);
+  return [w.name, status,
     `Damage ${w.dmg}${w.pellets > 1 ? ' x' + w.pellets : ''}, ${w.rate} shots/s, ${w.mag} rounds`, `Raw damage per second: ${dps}` + (w.pierce ? ', pierces' : '') + (w.splash ? ', splash' : '')];
 }
+function lockReason(wi) { return wi >= ORANGE_N && !allOrange() ? 'Own every orange weapon first.' : `Buy the ${WEAPONS[wi - 1].name} first.`; }
 function armoryClick(wi) {
   const w = WEAPONS[wi];
   if (SAVE.owned[wi]) { SAVE.equipped = SAVE.equipped === wi ? -1 : wi; persist(); Game.toast(SAVE.equipped === wi ? w.name + ' equipped' : 'Knife only. Weapon holstered.'); return; }
+  if (!canBuy(wi)) { sfx('error-a'); Game.toast(lockReason(wi)); return; }
   if (SAVE.gold < w.price) { sfx('error-a'); Game.toast(`${w.name} costs ${w.price} gold. You have ${SAVE.gold}.`); return; }
   pushScene(new Confirm(`Buy the ${w.name}?`, `${w.price} gold. You have ${SAVE.gold}.`, 'Buy', () => {
     SAVE.gold -= w.price; SAVE.stats.goldSpent += w.price; SAVE.owned[wi] = 1; SAVE.equipped = wi; persist();
@@ -326,24 +333,26 @@ class Credits extends MenuScene {
     panel('grey', x, y, w, h);
     ptext('CREDITS', x + w / 2, y + 9, 'B', 'center');
     // upgrade path
-    stext('Upgrade path', x + 16, y + 34, 6.4, P.dark, 'left', 700);
-    const owned = SAVE.owned.filter(Boolean).length;
-    stext(`${owned} / 8 weapons`, x + w - 16, y + 34, 5.4, P.dark, 'right', 600);
-    bar(x + 16, y + 74, w - 32, 10, owned / 8, 'yellow');
-    for (let i = 0; i < 8; i++) {
-      const wx = x + 16 + i * ((w - 32) / 8) + 10, wy = y + 40, o = SAVE.owned[i];
-      const on = this.hit(wx, wy, 26, 30, null, weaponTip(i));
-      spr('weapons', WEAPONS[i].tile, wx, wy, o ? null : { alpha: 0.35 });
-      stext(o ? (SAVE.equipped === i ? 'Equipped' : 'Owned') : WEAPONS[i].price + ' gold', wx + 12, wy + 28, 4.4, o ? P.redD : P.dark, 'center', 700);
+    stext('Upgrade path', x + 16, y + 32, 6.4, P.dark, 'left', 700);
+    const ao = allOrange(), oN = SAVE.owned.slice(0, ORANGE_N).filter(Boolean).length, gN = SAVE.owned.slice(ORANGE_N).filter(Boolean).length;
+    stext(`Orange ${oN} / ${ORANGE_N}` + (ao ? `, green ${gN} / ${ORANGE_N}` : ''), x + w - 16, y + 32, 5.4, P.dark, 'right', 600);
+    bar(x + 16, y + 97, w - 32, 9, (oN + gN) / WEAPONS.length, 'yellow');
+    for (let i = 0; i < WEAPONS.length; i++) {
+      const col = i % ORANGE_N, wx = x + 16 + col * ((w - 32) / ORANGE_N) + 10, wy = y + 36 + Math.floor(i / ORANGE_N) * 30, o = SAVE.owned[i];
+      const hidden = i >= ORANGE_N && !ao;
+      const on = this.hit(wx, wy + 4, 26, 26, null, hidden ? ['???', 'Own every orange weapon to find out.'] : weaponTip(i));
+      spr('weapons', WEAPONS[i].tile, wx, wy, o ? null : { alpha: hidden ? 0.12 : 0.35 });
+      const label = o ? (SAVE.equipped === i ? 'Equipped' : 'Owned') : hidden ? '???' : WEAPONS[i].price + ' gold';
+      stext(label, wx + 12, wy + 25, 4.4, o ? P.redD : P.dark, 'center', 700);
       if (on) spr('ui', 104, wx + 4, wy + 4);
     }
     // campaign (no total shown: the road keeps going)
     const cl = SAVE.cleared.filter(Boolean).length, unl = highestUnlocked(), dec = Math.floor((unl - 1) / 10) * 10;
-    stext('Campaign', x + 16, y + 98, 6.4, P.dark, 'left', 700);
-    stext(`${cl} levels cleared, furthest Level ${unl}`, x + w - 16, y + 98, 5.4, P.dark, 'right', 600);
+    stext('Campaign', x + 16, y + 116, 6.4, P.dark, 'left', 700);
+    stext(`${cl} levels cleared, furthest Level ${unl}`, x + w - 16, y + 116, 5.4, P.dark, 'right', 600);
     for (let k = 0; k < 10; k++) {
       const i = dec + k, L = i + 1; if (L > LEVEL_N) break;
-      const bx = x + 16 + k * 37.6, by = y + 108;
+      const bx = x + 16 + k * 37.6, by = y + 124;
       ctx.fillStyle = P.white; ctx.fillRect(bx, by, 34, 12);
       ctx.fillStyle = SAVE.cleared[i] ? P.teal : L <= unl ? P.sand : P.lavD; ctx.fillRect(bx + 1, by + 1, 32, 10);
       ctx.fillStyle = P.dark; ctx.fillRect(bx + 1, by + 1, 32, 1);
@@ -352,18 +361,18 @@ class Credits extends MenuScene {
       this.hit(bx, by, 34, 12, null, L <= unl ? [`Level ${L}: ${LEVELS[i].name}`, SAVE.cleared[i] ? 'Cleared' : 'Unlocked'] : ['Locked', 'Keep going to find out.']);
     }
     // job tiers
-    stext('Job difficulty', x + 16, y + 142, 6.4, P.dark, 'left', 700);
+    stext('Job difficulty', x + 16, y + 148, 6.4, P.dark, 'left', 700);
     ['cat', 'mouse'].forEach((id, k) => {
       const n = SAVE.npcs[id], tier = Math.min(n.count, MAX_TIER);
-      stext(`${NPCS[id].name} ${NPCS[id].title}`, x + 16, y + 156 + k * 15, 5.4, P.dark, 'left', 600);
-      bar(x + 100, y + 150 + k * 15, 120, 11, tier / MAX_TIER, 'red');
-      stext(tier >= MAX_TIER ? 'Max (Shotgun level)' : `Tier ${tier} / ${MAX_TIER}`, x + 226, y + 156 + k * 15, 5, P.dark, 'left', 600);
+      stext(`${NPCS[id].name} ${NPCS[id].title}`, x + 16, y + 160 + k * 14, 5.4, P.dark, 'left', 600);
+      bar(x + 100, y + 154 + k * 14, 120, 11, tier / MAX_TIER, 'red');
+      stext(tier >= MAX_TIER ? 'Max tier' : `Tier ${tier} / ${MAX_TIER}`, x + 226, y + 160 + k * 14, 5, P.dark, 'left', 600);
     });
     // stats
     const st = SAVE.stats;
     const stats = [['Monsters defeated', st.kills], ['Gold earned', st.goldEarned], ['Gold spent', st.goldSpent], ['Chests opened', st.chests], ['Jobs finished', st.quests], ['Bosses beaten', st.bosses], ['Runs', st.runs], ['Time in the desert', fmtTime(st.playTime * 1000)]];
     stats.forEach((s, k) => {
-      const cx = x + 16 + (k % 4) * 96, cy = y + 192 + Math.floor(k / 4) * 15;
+      const cx = x + 16 + (k % 4) * 96, cy = y + 194 + Math.floor(k / 4) * 13;
       stext(s[0], cx, cy, 4.8, P.dark, 'left', 500);
       stext(String(s[1]), cx + 88, cy, 5.2, P.dark, 'right', 700);
     });

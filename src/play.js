@@ -119,7 +119,7 @@ class Play {
     const e = { type, D, x, y, h: h === 1 ? 1 : 0, ramp: h === 2, hp: D.hp * hpMul(L), speed: D.speed * MONSTER_SPEED * (1 + 0.008 * (L - 1)) * (0.9 + R() * 0.2), dmg: D.dmg + enemyDmg(L) - 1,
       cd: 1 + R() * 2, flash: 0, face: 1, anim: R() * 2, dead: false, deadT: 0, boss: false, scale: 1, burst: 0, burstT: 0, wob: R() * 6, kbx: 0, kby: 0, strafe: R() < 0.5 ? 1 : -1, strafeT: 2, moving: true, hitWall: false };
     if (boss) {
-      e.boss = true; e.hp = boss.hp; e.scale = boss.scale; e.speed = boss.speed * MONSTER_SPEED; e.moves = boss.moves; e.moveCd = 2; e.charge = 0; e.chargeT = 0; e.name = boss.name; e.dmg = 2;
+      e.boss = true; e.hp = boss.hp * lateHp(L); e.scale = boss.scale; e.speed = boss.speed * MONSTER_SPEED; e.moves = boss.moves; e.moveCd = 2; e.charge = 0; e.chargeT = 0; e.name = boss.name; e.dmg = 2;
     }
     e.maxHp = e.hp;
     this.ents.push(e); return e;
@@ -479,7 +479,7 @@ class Play {
       p.dashX = dx / l; p.dashY = dy / l; p.dashT = 0.17; p.dashCd = 0.9; p.inv = Math.max(p.inv, 0.25); sfx('jump-a', 0.5);
     }
     if (k === 'q' || k === 'tab') this.cycleWeapon(1);
-    if (k >= '1' && k <= '8') { const wi = +k - 1; if (SAVE.owned[wi]) this.equip(wi); }
+    if (k >= '1' && k <= '8') { const wi = +k - 1, g = wi + ORANGE_N; if (SAVE.owned[g]) this.equip(g); else if (SAVE.owned[wi]) this.equip(wi); }
     if (k === '0') this.equip(-1);
   }
   wheel(dir) { if (!this.paused && !this.result) this.cycleWeapon(dir); }
@@ -551,12 +551,6 @@ class Play {
     spr('enemies', fr, Math.round(p.x) - 12, Math.round(p.y) - 20, flip ? { flip: true } : null);
     if (!p.dead && !gunBehind) this.drawGun();
     ctx.globalAlpha = 1;
-    if (p.shield > 0 && !p.dead) {
-      const r = 11 + Math.sin(this.t * 4) * 0.6;
-      ctx.beginPath(); ctx.ellipse(p.x, p.y - 8, r, r + 1, 0, 0, TAU);
-      ctx.fillStyle = 'rgba(119,143,219,0.14)'; ctx.fill();
-      ctx.strokeStyle = 'rgba(161,182,245,0.9)'; ctx.lineWidth = 1; ctx.stroke();
-    }
     if (p.reload > 0) { const w = WEAPONS[p.wi]; const f = 1 - p.reload / w.reload; ctx.fillStyle = P.dark; ctx.fillRect(Math.round(p.x) - 9, Math.round(p.y) - 27, 18, 4); ctx.fillStyle = P.yel; ctx.fillRect(Math.round(p.x) - 8, Math.round(p.y) - 26, Math.round(16 * f), 2); }
   }
   drawGun() {

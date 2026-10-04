@@ -1,7 +1,7 @@
 /* ==========================================================================
    Data: weapons, monsters, levels, quests
    ========================================================================== */
-const WEAPONS = [
+const ORANGE = [
   { name: 'Pistol',       tile: 0, price: 1,   dmg: 2,   rate: 3.5, speed: 250, spread: 3,  pellets: 1, mag: 8,  reload: 0.9, life: 0.8,  sfx: 'shoot-a', kind: 'bullet' },
   { name: 'Long Pistol',  tile: 1, price: 5,   dmg: 3,   rate: 3.5, speed: 290, spread: 2,  pellets: 1, mag: 10, reload: 0.9, life: 0.9,  sfx: 'shoot-b', kind: 'bullet' },
   { name: 'Blaster',      tile: 2, price: 15,  dmg: 3,   rate: 6,   speed: 270, spread: 4,  pellets: 1, mag: 18, reload: 1.0, life: 0.85, sfx: 'shoot-c', kind: 'laser' },
@@ -11,6 +11,12 @@ const WEAPONS = [
   { name: 'Plasma Rifle', tile: 6, price: 100, dmg: 9,   rate: 4,   speed: 230, spread: 3,  pellets: 1, mag: 16, reload: 1.4, life: 1.0,  sfx: 'shoot-f', kind: 'plasma', splash: 24 },
   { name: 'Shotgun',      tile: 7, price: 115, dmg: 5,   rate: 1.8, speed: 330, spread: 26, pellets: 8, mag: 6,  reload: 1.5, life: 0.45, sfx: 'shoot-h', kind: 'pellet' }
 ];
+/* green set: the same guns from the teal row of the sheet, twice the price and twice the damage.
+   It shows up in the armory once every orange gun is owned, and is bought in order. */
+const ORANGE_N = ORANGE.length;
+const WEAPONS = ORANGE.concat(ORANGE.map(w => ({ ...w, name: 'Green ' + w.name, tile: w.tile + 10, price: w.price * 2, dmg: w.dmg * 2, green: true })));
+const allOrange = () => SAVE.owned.slice(0, ORANGE_N).every(Boolean);
+const canBuy = wi => wi < ORANGE_N || (allOrange() && (wi === ORANGE_N || !!SAVE.owned[wi - 1]));
 const KNIFE = { name: 'Knife', tile: 8, dmg: 2.5, rate: 2.5, range: 26 };
 
 const MONSTERS = {
@@ -71,7 +77,9 @@ for (let L = 5; L <= LEVEL_N; L += 5) {
 }
 BOSSES[LEVEL_N] = { type: 'raider', name: 'Sand Tyrant', hp: Math.round((140 + (LEVEL_N - 5) * 62) * 1.2), scale: 2.3, speed: 48, moves: ['ring', 'spread', 'spawn', 'charge', 'aim'] };
 const levelCount = L => { const n = 6 + Math.round(0.9 * L); return BOSSES[L] ? Math.round(n * 0.7) : n; };
-const hpMul = L => 1 + 0.08 * (L - 1);
+/* past Level 15 every monster, bosses included, has 1.5x health */
+const lateHp = L => (L > 15 ? 1.5 : 1);
+const hpMul = L => (1 + 0.08 * (L - 1)) * lateHp(L);
 const enemyDmg = L => 1 + Math.min(2, Math.floor((L - 1) / 17));
 const goldPerKill = L => (L <= 10 ? 3 : 5);
 function highestUnlocked() { let u = 1; for (let i = 0; i < LEVEL_N; i++) if (SAVE.cleared[i]) u = Math.min(LEVEL_N, i + 2); return u; }
@@ -178,7 +186,6 @@ function makeQuest(npcId) {
     q = { type: 'chests', n: 2, reason: 'Psst. My supply chests got scattered when the slimes chased my wagon. Open 2 of them out there and the finder’s fee is yours.' };
   } else {
     const types = npcId === 'cat' ? ['kill', 'killAny', 'clear', 'boss', 'weapon', 'flawless'] : ['chests', 'gold', 'clear', 'kill', 'weapon'];
-    const ownedTop = SAVE.owned.lastIndexOf(1);
     let tries = 0;
     while (!q && tries++ < 20) {
       const ty = pick(r, types);
@@ -194,8 +201,10 @@ function makeQuest(npcId) {
         if (t < 2 || bl > unl) continue;
         q = { type: 'boss', lvl: bl, reason: pick(r, REASONS.boss) };
       } else if (ty === 'weapon') {
-        const w = Math.min(t, 7, ownedTop + 1);
-        if (w < 0) continue;
+        const have = SAVE.owned.map((o, i) => (o ? i : -1)).filter(i => i >= 0);
+        if (!have.length) continue;
+        const cap = Math.min(Math.round(t * 1.5), WEAPONS.length - 1), fit = have.filter(i => i <= cap);
+        const w = fit.length ? fit[fit.length - 1] : have[0];
         q = { type: 'weapon', w, n: 10 + 3 * t, reason: pick(r, REASONS.weapon) };
       } else if (ty === 'flawless') { if (t < 1) continue; q = { type: 'flawless', lvl: Math.max(1, lvl - 2), reason: pick(r, REASONS.flawless) }; }
       else if (ty === 'chests') q = { type: 'chests', n: Math.min(2 + t, 12), reason: pick(r, REASONS.chests) };
