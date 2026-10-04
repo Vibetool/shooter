@@ -219,24 +219,22 @@ function makeQuest(npcId) {
   if (q.type === 'clear' || q.type === 'boss' || q.type === 'flawless') q.n = 1;
   return q;
 }
-/* job timing: Mira (cat) hands out a job every time the game is opened,
-   Pip (mouse) finds one every 10 minutes. Each keeps at most one open job. */
-function pageOpenJobs() {
-  if (!SAVE) return;
-  const mz = SAVE.npcs.mouse;
-  mz.next = Math.min(mz.next, Date.now() + QUEST_MS); // older saves waited 20 minutes
-  const cat = SAVE.npcs.cat;
-  if (!cat.quest) { cat.quest = makeQuest('cat'); if (Game.toast) Game.toast(NPCS.cat.name + ' has a new job for you'); }
-  persist();
-}
+/* job timing: each animal has a 20-minute cooldown and they take turns 10 minutes apart,
+   so a new job shows up every 10 minutes. Mira goes first whenever both are due
+   (a fresh game, or coming back after a long break). Each keeps at most one open job. */
+function jobDueAt(id) { return Math.max(SAVE.npcs[id].next, (SAVE.lastJobAt || 0) + STAGGER_MS); }
 function questTick() {
   if (!SAVE) return;
-  const now = Date.now(), n = SAVE.npcs.mouse;
-  if (!n.quest && now >= n.next) {
-    n.quest = makeQuest('mouse');
+  const now = Date.now();
+  for (const id of ['cat', 'mouse']) {
+    const n = SAVE.npcs[id];
+    if (n.quest || now < jobDueAt(id)) continue;
+    n.quest = makeQuest(id);
     n.next = Math.max(now, n.next) + QUEST_MS;
-    if (Game.toast) Game.toast(NPCS.mouse.name + ' has a new job for you');
+    SAVE.lastJobAt = now;
+    if (Game.toast) Game.toast(NPCS[id].name + ' has a new job for you');
     persist();
+    break;
   }
 }
 function questEvent(ev) {

@@ -180,7 +180,7 @@ class Home extends MenuScene {
 }
 function npcTip(id) {
   const n = SAVE.npcs[id], q = n.quest, N = NPCS[id];
-  if (!q) return [N.name + ' ' + N.title, id === 'cat' ? 'New job the next time you open the game' : 'Next job in ' + fmtTime(n.next - Date.now())];
+  if (!q) return [N.name + ' ' + N.title, 'Next job in ' + fmtTime(jobDueAt(id) - Date.now())];
   if (q.status === 'offered') return [N.name + ' ' + N.title, 'Has a new job for you!'];
   if (q.status === 'done') return [N.name + ' ' + N.title, 'Job done. Click to claim ' + q.reward + ' gold.'];
   return [N.name + ' ' + N.title, questText(q).goal, `Progress ${q.prog} / ${q.n}`];
@@ -189,7 +189,7 @@ function radarTip() {
   const out = ['Job radar'];
   for (const id of ['cat', 'mouse']) {
     const n = SAVE.npcs[id], q = n.quest;
-    out.push(NPCS[id].name + ': ' + (!q ? (id === 'cat' ? 'new job next time you open the game' : 'next job in ' + fmtTime(n.next - Date.now())) : q.status === 'offered' ? 'new job waiting' : q.status === 'done' ? 'reward ready' : `${q.prog}/${q.n} ${questText(q).goal.toLowerCase()}`));
+    out.push(NPCS[id].name + ': ' + (!q ? 'next job in ' + fmtTime(jobDueAt(id) - Date.now()) : q.status === 'offered' ? 'new job waiting' : q.status === 'done' ? 'reward ready' : `${q.prog}/${q.n} ${questText(q).goal.toLowerCase()}`));
   }
   return out;
 }
@@ -404,7 +404,7 @@ class NpcDialog extends MenuScene {
     if (!q) {
       para('“' + CHATTER[id][n.count % CHATTER[id].length] + '”');
       yy += 6;
-      para(id === 'cat' ? 'I\u2019ll have a new job for you the next time you open the game.' : 'Next job in ' + fmtTime(n.next - Date.now()) + '. I find a new job every 10 minutes.', 5.4, 600);
+      para('Next job in ' + fmtTime(jobDueAt(id) - Date.now()) + '. I find a new job every 20 minutes, and ' + (id === 'cat' ? 'Pip' : 'Mira') + ' takes the turns in between.', 5.4, 600);
       textButton(this, 'red', x + w / 2 - 30, y + h - 32, 60, 21, 'OK', () => popScene(this));
     } else {
       const tx = questText(q);
@@ -424,7 +424,7 @@ class NpcDialog extends MenuScene {
         stext(`${q.prog} / ${q.n}`, bx + 156, yy + 5.5, 5.6, P.dark, 'left', 700);
         textButton(this, 'red', x + w / 2 - 70, y + h - 32, 64, 21, 'On it', () => popScene(this));
         textButton(this, 'grey', x + w / 2 + 6, y + h - 32, 64, 21, 'Drop job', () => {
-          pushScene(new Confirm('Drop this job?', id === 'cat' ? 'Mira has a new one next time you open the game.' : 'Pip\u2019s next job still waits for its timer.', 'Drop', () => { n.quest = null; persist(); popScene(this); }));
+          pushScene(new Confirm('Drop this job?', 'The next job still waits for its timer.', 'Drop', () => { n.quest = null; persist(); popScene(this); }));
         });
       } else {
         bar(bx, yy, 150, 11, 1, 'blue');

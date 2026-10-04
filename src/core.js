@@ -4,7 +4,8 @@
    Art & sound: Kenney "Desert Shooter Pack" (CC0)
    ========================================================================== */
 const MW = 460, MH = 258, T = 16;
-const QUEST_MS = 10 * 60 * 1000; // Pip's job cooldown
+const QUEST_MS = 20 * 60 * 1000;   // each animal's job cooldown
+const STAGGER_MS = 10 * 60 * 1000; // they take turns, so a new job shows up every 10 minutes
 const P = {
   dark: '#47324b', white: '#ffffff', red: '#dd674c', redL: '#f78d68', redD: '#b94f37',
   lav: '#999ac4', lavL: '#c3c6e9', lavD: '#81759b', yel: '#ffb84c', yelL: '#ffde8c', yelD: '#ec9a1e',
@@ -309,7 +310,7 @@ function defaultSave() {
     v: 1, created: now, savedAt: 0, gold: 0, owned: new Array(16).fill(0), equipped: -1, page: 0,
     cleared: new Array(50).fill(0), best: new Array(50).fill(0),
     stats: { kills: 0, goldEarned: 0, goldSpent: 0, chests: 0, deaths: 0, quests: 0, bosses: 0, playTime: 0, runs: 0 },
-    npcs: { cat: { next: now, quest: null, count: 0 }, mouse: { next: now + QUEST_MS, quest: null, count: 0 } },
+    npcs: { cat: { next: now, quest: null, count: 0 }, mouse: { next: now + STAGGER_MS, quest: null, count: 0 } }, lastJobAt: 0,
     settings: { sfx: 0.8, music: 0.45, shake: 1, nums: 1 }
   };
 }
@@ -348,7 +349,7 @@ const Cloud = {
           if (remote && (remote.savedAt || 0) > (SAVE.savedAt || 0)) {
             SAVE = normalizeSave(remote);
             try { localStorage.setItem(SAVE_KEY, JSON.stringify(SAVE)); } catch (e) { /* ignore */ }
-            applyVolumes(); pageOpenJobs();
+            applyVolumes(); questTick();
           }
         }
       }
