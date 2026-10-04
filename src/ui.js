@@ -194,13 +194,13 @@ function radarTip() {
   return out;
 }
 function weaponTip(wi) {
-  const w = WEAPONS[wi], owned = SAVE.owned[wi];
-  const dps = (w.dmg * w.pellets * w.rate).toFixed(0);
+  const w = WEAPONS[wi], owned = SAVE.owned[wi], m = dmgMul(), dmg = +(w.dmg * m).toFixed(1);
+  const dps = (dmg * w.pellets * w.rate).toFixed(0);
   const status = owned ? (SAVE.equipped === wi ? 'Equipped' : 'Owned. Click to equip.')
     : !canBuy(wi) ? `${w.price} gold. ` + lockReason(wi)
     : `Price: ${w.price} gold` + (SAVE.gold >= w.price ? '. Click to buy.' : ` (you have ${SAVE.gold})`);
   return [w.name, status,
-    `Damage ${w.dmg}${w.pellets > 1 ? ' x' + w.pellets : ''}, ${w.rate} shots/s, ${w.mag} rounds`, `Raw damage per second: ${dps}` + (w.pierce ? ', pierces' : '') + (w.splash ? ', splash' : '')];
+    `Damage ${dmg}${w.pellets > 1 ? ' x' + w.pellets : ''}${m > 1 ? ' (1.5x bonus)' : ''}, ${w.rate} shots/s, ${w.mag} rounds`, `Raw damage per second: ${dps}` + (w.pierce ? ', pierces' : '') + (w.splash ? ', splash' : '')];
 }
 function lockReason(wi) { return wi >= ORANGE_N && !allOrange() ? 'Own every orange weapon first.' : `Buy the ${WEAPONS[wi - 1].name} first.`; }
 function armoryClick(wi) {
@@ -253,7 +253,7 @@ class Levels extends MenuScene {
       const L = i + 1, k = i - first, x = 18 + (k % 5) * 86, y = 46 + Math.floor(k / 5) * 52, w = 80, h = 46;
       const open = L <= unl, cleared = SAVE.cleared[i];
       const def = LEVELS[i];
-      const tip = open ? [`Level ${L}: ${def.name}`, 'Monsters: ' + def.pool.map(m => MONSTERS[m].plural).join(', '), `${goldPerKill(L)} gold per monster` + (L >= 11 ? ', gold chests (15)' : ', orange chests (5)'), BOSSES[L] ? 'Boss: ' + BOSSES[L].name : `${levelCount(L)} monsters`, cleared ? 'Cleared. Replay for more gold.' : 'Click to play'] : [`Level ${L}`, 'Locked. Clear Level ' + (L - 1) + ' first.'];
+      const tip = open ? [`Level ${L}: ${def.name}`, 'Monsters: ' + def.pool.map(m => MONSTERS[m].plural).join(', '), `${goldPerKill(L)} gold per monster` + (L >= 11 ? ', gold chests (15)' : ', orange chests (5)'), BOSSES[L] ? 'Boss: ' + BOSSES[L].name : `${levelCount(L)} monsters`, ...(L === 9 && !cleared ? ['Clear reward: 1.5x weapon damage and an auto Long Pistol'] : []), cleared ? 'Cleared. Replay for more gold.' : 'Click to play'] : [`Level ${L}`, 'Locked. Clear Level ' + (L - 1) + ' first.'];
       const on = this.hit(x, y, w, h, open ? () => startLevel(i) : () => { sfx('error-a'); }, tip);
       const yy = y - (on && open ? 1 : 0);
       panel(open ? 'blue' : 'grey', x, yy, w, h);

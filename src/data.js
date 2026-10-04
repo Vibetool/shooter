@@ -17,6 +17,10 @@ const ORANGE_N = ORANGE.length;
 const WEAPONS = ORANGE.concat(ORANGE.map(w => ({ ...w, name: 'Green ' + w.name, tile: w.tile + 10, price: w.price * 2, dmg: w.dmg * 2, green: true })));
 const allOrange = () => SAVE.owned.slice(0, ORANGE_N).every(Boolean);
 const canBuy = wi => wi < ORANGE_N || (allOrange() && (wi === ORANGE_N || !!SAVE.owned[wi - 1]));
+/* clearing Level 9 makes every weapon hit 1.5x harder and adds an automatic Long Pistol shot from the hero's body */
+const dmgMul = () => (SAVE && SAVE.cleared[8] ? 1.5 : 1);
+const hasAutoGun = () => !!(SAVE && SAVE.cleared[8]);
+const AUTO_GUN = 1, AUTO_GUN_CD = 2; // Long Pistol, one shot every 2 seconds
 const KNIFE = { name: 'Knife', tile: 8, dmg: 2.5, rate: 2.5, range: 26, autoCd: 2 }; // autoCd: seconds between automatic strikes
 
 const MONSTERS = {

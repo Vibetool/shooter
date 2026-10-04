@@ -15,7 +15,7 @@ class Play {
     this.meds = m.medkits.map(c => ({ x: c.x * T + 8, y: c.y * T + 12, used: false }));
     const wi = SAVE.owned[SAVE.equipped] ? SAVE.equipped : -1;
     this.p = { x: m.spawn.x * T + 8, y: m.spawn.y * T + 10, vx: 0, vy: 0, h: 0, ramp: false, hp: 10, maxHp: 10, inv: 1, aim: 0, wi,
-      ammo: wi >= 0 ? WEAPONS[wi].mag : 0, reload: 0, cd: 0, knifeT: 0, knifeCd: 0, autoKnifeCd: 0, knifeA: 0, dashT: 0, dashCd: 0, dashX: 0, dashY: 0, walk: 0, moving: false, dead: false, scale: 1, shield: 1, maxShield: 1 };
+      ammo: wi >= 0 ? WEAPONS[wi].mag : 0, reload: 0, cd: 0, knifeT: 0, knifeCd: 0, autoKnifeCd: 0, knifeA: 0, autoShotCd: 1, dashT: 0, dashCd: 0, dashX: 0, dashY: 0, walk: 0, moving: false, dead: false, scale: 1, shield: 1, maxShield: 1 };
     this.total = levelCount(this.L); this.spawned = 0; this.killed = 0; this.spawnT = 1.5;
     this.bossDef = BOSSES[this.L] || null; this.bossSpawned = false; this.bossEnt = null; this.bossDead = false;
     this.cap = 4 + Math.floor(this.L * 0.6);
@@ -147,7 +147,7 @@ class Play {
     for (let k = 0; k < w.pellets; k++) {
       const a = p.aim + (R() - 0.5) * (w.spread * Math.PI / 180);
       const sp = w.speed * (w.pellets > 1 ? 0.85 + R() * 0.3 : 1);
-      this.bullets.push({ x: ox, y: oy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: w.life * (w.pellets > 1 ? 0.8 + R() * 0.4 : 1), dmg: w.dmg, kind: w.kind, pierce: w.pierce || 0, splash: w.splash || 0, hit: [], wi: p.wi });
+      this.bullets.push({ x: ox, y: oy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: w.life * (w.pellets > 1 ? 0.8 + R() * 0.4 : 1), dmg: w.dmg * dmgMul(), kind: w.kind, pierce: w.pierce || 0, splash: w.splash || 0, hit: [], wi: p.wi });
     }
     this.parts.push({ x: ox, y: oy, vx: 0, vy: 0, t: 0.05, max: 0.05, size: 3, col: P.yelL });
     sfx(w.sfx, 0.5, 0.95 + R() * 0.1, 0.02);
@@ -163,7 +163,7 @@ class Play {
     for (const e of this.ents) {
       if (e.dead) continue;
       const dx = e.x - p.x, dy = (e.y - 6 * e.scale) - (p.y - 6), d = Math.hypot(dx, dy);
-      if (d < KNIFE.range + 6 * e.scale && (Math.abs(angDiff(Math.atan2(dy, dx), a)) < 1.2 || d < 12)) this.damage(e, KNIFE.dmg, -1, Math.cos(a) * 160, Math.sin(a) * 160);
+      if (d < KNIFE.range + 6 * e.scale && (Math.abs(angDiff(Math.atan2(dy, dx), a)) < 1.2 || d < 12)) this.damage(e, KNIFE.dmg * dmgMul(), -1, Math.cos(a) * 160, Math.sin(a) * 160);
     }
   }
   /* the knife strikes on its own at the closest monster inside its reach, at most once every 2 seconds */
@@ -176,6 +176,23 @@ class Play {
       if (d < KNIFE.range + 6 * e.scale && d < bd) { bd = d; best = Math.atan2(dy, dx); }
     }
     if (best !== null) { this.knife(best); p.autoKnifeCd = KNIFE.autoCd; }
+  }
+  /* Level 9 reward: every 2 seconds a Long Pistol bullet flies out of the hero's body at the nearest monster in sight */
+  autoShot(dt) {
+    const p = this.p; p.autoShotCd -= dt;
+    if (p.autoShotCd > 0) return;
+    const w = WEAPONS[AUTO_GUN], range = w.speed * w.life - 10, ox = p.x, oy = p.y - 7;
+    let best = null, bd = range;
+    for (const e of this.ents) {
+      if (e.dead) continue;
+      const tx = e.x, ty = e.y - 7 * e.scale, d = Math.hypot(tx - ox, ty - oy);
+      if (d < bd && this.los(ox, oy, tx, ty)) { bd = d; best = e; }
+    }
+    if (!best) return;
+    const a = Math.atan2(best.y - 7 * best.scale - oy, best.x - ox);
+    p.autoShotCd = AUTO_GUN_CD;
+    this.bullets.push({ x: ox, y: oy, vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, life: w.life, dmg: w.dmg * dmgMul(), kind: w.kind, pierce: 0, splash: 0, hit: [], wi: -3 });
+    sfx(w.sfx, 0.35, 1.1, 0.02);
   }
   damage(e, dmg, wi, kx, ky) {
     if (e.dead) return;
@@ -246,6 +263,7 @@ class Play {
       const firing = (IN.down && !IN.touch) || (this.tAim && IN.touches[this.tAim]);
       if (firing && this.state !== 'dead') this.fire();
       this.autoKnife();
+      if (hasAutoGun() && this.state === 'play') this.autoShot(dt);
     }
     // timers
     p.cd = Math.max(0, p.cd - dt); p.knifeCd = Math.max(0, p.knifeCd - dt); p.autoKnifeCd = Math.max(0, p.autoKnifeCd - dt); p.knifeT = Math.max(0, p.knifeT - dt);
@@ -456,6 +474,7 @@ class Play {
     if (won) {
       if (this.coins.length) { this.gainGold(this.coins.length); this.coins = []; }
       const first = !SAVE.cleared[this.li];
+      if (first && this.li === 8) Game.toast('Level 9 reward: weapons hit 1.5x harder, and a Long Pistol now fires for you');
       SAVE.cleared[this.li] = 1;
       const tm = Math.round(this.time);
       if (!SAVE.best[this.li] || tm < SAVE.best[this.li]) SAVE.best[this.li] = tm;
@@ -700,6 +719,7 @@ class Play {
     const rows = [['Level', `${this.L}: ${this.def.name}`], ['Gold collected', '+' + this.goldRun], ['Monsters defeated', this.killsRun], ['Chests opened', this.chestsRun], ['Hits taken', this.hits], ['Time', fmtTime(this.time * 1000)]];
     rows.forEach((row, k) => { stext(row[0], x + 22, y + 34 + k * 11, 5.6, P.dark, 'left', 500); stext(String(row[1]), x + w - 22, y + 34 + k * 11, 5.6, P.dark, 'right', 700); });
     if (r.won && r.first && this.L < LEVEL_N) stext(`Level ${this.L + 1} unlocked!`, x + w / 2, y + 104, 6, P.redD, 'center', 700);
+    if (r.won && r.first && this.L === 9) stext('Bonus: 1.5x weapon damage + auto Long Pistol', x + w / 2, y + 113, 5, P.redD, 'center', 700);
     if (r.won && this.L === LEVEL_N) stext('The Sand Tyrant is defeated. Dustwell is safe!', x + w / 2, y + 104, 5.6, P.redD, 'center', 700);
     if (!r.won) stext('Your gold is kept. Try again or gear up in town.', x + w / 2, y + 104, 5.4, P.redD, 'center', 600);
     let any = false;
