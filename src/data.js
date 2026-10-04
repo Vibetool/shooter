@@ -55,6 +55,8 @@ const LEVELS = LEVEL_NAMES.map((name, i) => {
   else { pool = ['raider', 'hound']; const extra = ['imp', 'bat', 'slime'].filter(() => r() < 0.6); pool = pool.concat(extra.length ? extra : ['imp']); }
   return { name, w: 40 + Math.min(20, Math.floor(L * 0.6)), h: 28 + Math.min(12, Math.floor(L * 0.4)), pool, th };
 });
+/* every monster (bosses included) moves at 2/3 of its listed speed */
+const MONSTER_SPEED = 2 / 3;
 const BOSS_KINDS = [
   { type: 'slime', names: ['King Slime', 'Slime Colossus'], moves: ['charge', 'spawn', 'ring'] },
   { type: 'imp', names: ['Fire Lord', 'Inferno Imp'], moves: ['ring', 'aim', 'spawn'] },

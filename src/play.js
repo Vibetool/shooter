@@ -15,7 +15,7 @@ class Play {
     this.meds = m.medkits.map(c => ({ x: c.x * T + 8, y: c.y * T + 12, used: false }));
     const wi = SAVE.owned[SAVE.equipped] ? SAVE.equipped : -1;
     this.p = { x: m.spawn.x * T + 8, y: m.spawn.y * T + 10, vx: 0, vy: 0, h: 0, ramp: false, hp: 10, maxHp: 10, inv: 1, aim: 0, wi,
-      ammo: wi >= 0 ? WEAPONS[wi].mag : 0, reload: 0, cd: 0, knifeT: 0, knifeCd: 0, dashT: 0, dashCd: 0, dashX: 0, dashY: 0, walk: 0, moving: false, dead: false, scale: 1 };
+      ammo: wi >= 0 ? WEAPONS[wi].mag : 0, reload: 0, cd: 0, knifeT: 0, knifeCd: 0, dashT: 0, dashCd: 0, dashX: 0, dashY: 0, walk: 0, moving: false, dead: false, scale: 1, shield: 1, maxShield: 1 };
     this.total = levelCount(this.L); this.spawned = 0; this.killed = 0; this.spawnT = 1.5;
     this.bossDef = BOSSES[this.L] || null; this.bossSpawned = false; this.bossEnt = null; this.bossDead = false;
     this.cap = 4 + Math.floor(this.L * 0.6);
@@ -27,6 +27,7 @@ class Play {
     this.paused = false; this.result = null; this.hot = []; this.saveT = 0;
     this.tMove = null; this.tAim = null;
     SAVE.stats.runs++; persist();
+    Game.toast('Shield ready: it blocks 1 damage this run');
     Music.intensity = 1;
     const initial = Math.min(this.total, Math.ceil(this.cap * 0.6));
     for (let k = 0; k < initial; k++) this.spawnEnemy(false);
@@ -115,10 +116,10 @@ class Play {
   }
   addEnemy(type, x, y, boss) {
     const D = MONSTERS[type], L = this.L, h = this.map.hgt[this.cell(x, y)];
-    const e = { type, D, x, y, h: h === 1 ? 1 : 0, ramp: h === 2, hp: D.hp * hpMul(L), speed: D.speed * (1 + 0.008 * (L - 1)) * (0.9 + R() * 0.2), dmg: D.dmg + enemyDmg(L) - 1,
+    const e = { type, D, x, y, h: h === 1 ? 1 : 0, ramp: h === 2, hp: D.hp * hpMul(L), speed: D.speed * MONSTER_SPEED * (1 + 0.008 * (L - 1)) * (0.9 + R() * 0.2), dmg: D.dmg + enemyDmg(L) - 1,
       cd: 1 + R() * 2, flash: 0, face: 1, anim: R() * 2, dead: false, deadT: 0, boss: false, scale: 1, burst: 0, burstT: 0, wob: R() * 6, kbx: 0, kby: 0, strafe: R() < 0.5 ? 1 : -1, strafeT: 2, moving: true, hitWall: false };
     if (boss) {
-      e.boss = true; e.hp = boss.hp; e.scale = boss.scale; e.speed = boss.speed; e.moves = boss.moves; e.moveCd = 2; e.charge = 0; e.chargeT = 0; e.name = boss.name; e.dmg = 2;
+      e.boss = true; e.hp = boss.hp; e.scale = boss.scale; e.speed = boss.speed * MONSTER_SPEED; e.moves = boss.moves; e.moveCd = 2; e.charge = 0; e.chargeT = 0; e.name = boss.name; e.dmg = 2;
     }
     e.maxHp = e.hp;
     this.ents.push(e); return e;
@@ -192,9 +193,17 @@ class Play {
   dropCoin(x, y) { const a = R() * TAU, s = 25 + R() * 45; this.coins.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, z: 0, vz: 60 + R() * 40, t: 0, mag: false }); }
   hurtPlayer(dmg, kx, ky) {
     const p = this.p; if (p.inv > 0 || p.dead || this.state !== 'play') return;
-    p.hp -= dmg; p.inv = 0.9; this.hits++;
-    p.vx += kx * 120; p.vy += ky * 120;
-    sfx('hurt-a', 0.8); if (SAVE.settings.shake) this.shake = 6;
+    p.inv = 0.9; p.vx += kx * 120; p.vy += ky * 120;
+    if (SAVE.settings.shake) this.shake = 6;
+    if (p.shield > 0) {
+      const absorbed = Math.min(p.shield, dmg);
+      p.shield -= absorbed; dmg -= absorbed;
+      this.spark(p.x, p.y - 8, 12, P.blueL); this.puff(p.x, p.y - 8, 6, P.blue, 40);
+      sfx('hurt-d', 0.8, 0.6);
+      if (dmg <= 0) return;
+    }
+    p.hp -= dmg; this.hits++;
+    sfx('hurt-a', 0.8);
     if (p.hp <= 0) {
       p.hp = 0; p.dead = true; this.state = 'dead'; this.deadT = 1.6; SAVE.stats.deaths++;
       sfx('lose-a', 0.8); this.puff(p.x, p.y - 4, 16, P.blue, 60); persist();
@@ -259,6 +268,7 @@ class Play {
     // bullets
     for (const b of this.bullets) {
       b.life -= dt; const nx = b.x + b.vx * dt, ny = b.y + b.vy * dt;
+      if (this.blockFire(b, nx, ny)) continue;
       if (m.solid[this.cell(nx, ny)] & 2 || nx < 0 || ny < 0 || nx > m.W * T || ny > m.H * T) { b.life = 0; this.spark(b.x, b.y, 3, P.white); if (b.splash) this.explode(b); continue; }
       b.x = nx; b.y = ny;
       for (const e of this.ents) {
@@ -276,6 +286,7 @@ class Play {
     }
     this.bullets = this.bullets.filter(b => b.life > 0);
     for (const b of this.ebullets) {
+      if (b.life <= 0) continue;
       b.life -= dt; const nx = b.x + b.vx * dt, ny = b.y + b.vy * dt;
       if (m.solid[this.cell(nx, ny)] & 2 || nx < 0 || ny < 0 || nx > m.W * T || ny > m.H * T) { b.life = 0; this.spark(b.x, b.y, 3, P.redL); continue; }
       b.x = nx; b.y = ny;
@@ -321,6 +332,23 @@ class Play {
     this.cam.x = lerp(this.cam.x, tx, k); this.cam.y = lerp(this.cam.y, ty, k); this.clampCam();
     this.shake = Math.max(0, this.shake - dt * 30);
     this.saveT += dt; if (this.saveT > 10) { this.saveT = 0; persist(); }
+  }
+  /* a player shot knocks a yellow imp's fireball out of the air */
+  blockFire(b, nx, ny) {
+    const sx = nx - b.x, sy = ny - b.y, ll = sx * sx + sy * sy || 1;
+    for (const f of this.ebullets) {
+      if (f.life <= 0 || f.kind !== 'fire') continue;
+      const t = clamp(((f.x - b.x) * sx + (f.y - b.y) * sy) / ll, 0, 1);
+      const cx = b.x + sx * t - f.x, cy = b.y + sy * t - f.y;
+      if (cx * cx + cy * cy > 30) continue;
+      f.life = 0;
+      this.spark(f.x, f.y, 6, P.yel); this.puff(f.x, f.y, 4, P.redL, 30);
+      sfx('explosion-a', 0.2, 2.2, 0.05);
+      if (b.splash) { b.x = f.x; b.y = f.y; this.explode(b); b.life = 0; return true; }
+      if (b.pierce > 0) { b.pierce--; return false; }
+      b.life = 0; return true;
+    }
+    return false;
   }
   gainGold(n) { SAVE.gold += n; SAVE.stats.goldEarned += n; this.goldRun += n; questEvent({ k: 'gold', n }); sfx('coin-a', 0.45, 1 + R() * 0.15, 0.04); }
   nearestEnemy(r) { let best = null, bd = r; for (const e of this.ents) { if (e.dead) continue; const d = Math.hypot(e.x - this.p.x, e.y - this.p.y); if (d < bd) { bd = d; best = e; } } return best; }
@@ -391,7 +419,7 @@ class Play {
     e.moveCd -= dt;
     const enraged = e.hp < e.maxHp * 0.5;
     if (e.moveCd > 0 || e.charge > 0) return;
-    const mv = pick(R, e.moves), a0 = Math.atan2(this.p.y - 6 - (e.y - 14), this.p.x - e.x), dmg = enemyDmg(this.L);
+    const mv = pick(R, e.moves), a0 = Math.atan2(this.p.y - 6 - (e.y - 14), this.p.x - e.x), dmg = enemyDmg(this.L), kind = e.type === 'imp' ? 'fire' : 'ebullet';
     if (mv === 'charge') { e.charge = 1.0; sfx('jump-a', 0.7, 0.7); }
     else if (mv === 'spawn') {
       const alive = this.ents.filter(o => !o.dead && o.minion).length;
@@ -399,13 +427,13 @@ class Play {
       sfx('jump-c', 0.6, 0.8);
     } else if (mv === 'ring') {
       const n = enraged ? 18 : 14, off = R() * TAU;
-      for (let k = 0; k < n; k++) this.eshoot(e.x, e.y - 14, off + k / n * TAU, 85, e.type === 'imp' ? 'fire' : 'ebullet', dmg);
+      for (let k = 0; k < n; k++) this.eshoot(e.x, e.y - 14, off + k / n * TAU, 85, kind, dmg);
       sfx('explosion-a', 0.4, 1.6);
     } else if (mv === 'aim') {
-      for (let k = 0; k < (enraged ? 5 : 3); k++) setTimeout(() => { if (!e.dead && this.state === 'play') { const a = Math.atan2(this.p.y - 6 - (e.y - 14), this.p.x - e.x); this.eshoot(e.x, e.y - 14, a, 150, 'ebullet', dmg); sfx('shoot-a', 0.3, 0.8, 0.05); } }, k * 140);
+      for (let k = 0; k < (enraged ? 5 : 3); k++) setTimeout(() => { if (!e.dead && this.state === 'play') { const a = Math.atan2(this.p.y - 6 - (e.y - 14), this.p.x - e.x); this.eshoot(e.x, e.y - 14, a, 150, kind, dmg); sfx('shoot-a', 0.3, 0.8, 0.05); } }, k * 140);
     } else if (mv === 'spread') {
       const n = enraged ? 7 : 5;
-      for (let k = 0; k < n; k++) this.eshoot(e.x, e.y - 14, a0 + (k - (n - 1) / 2) * 0.16, 130, 'ebullet', dmg);
+      for (let k = 0; k < n; k++) this.eshoot(e.x, e.y - 14, a0 + (k - (n - 1) / 2) * 0.16, 130, kind, dmg);
       sfx('shoot-h', 0.4, 0.8);
     }
     e.moveCd = (1.5 + R() * 0.9) * (enraged ? 0.7 : 1);
@@ -511,6 +539,12 @@ class Play {
     spr('enemies', fr, Math.round(p.x) - 12, Math.round(p.y) - 20, flip ? { flip: true } : null);
     if (!p.dead && !gunBehind) this.drawGun();
     ctx.globalAlpha = 1;
+    if (p.shield > 0 && !p.dead) {
+      const r = 11 + Math.sin(this.t * 4) * 0.6;
+      ctx.beginPath(); ctx.ellipse(p.x, p.y - 8, r, r + 1, 0, 0, TAU);
+      ctx.fillStyle = 'rgba(119,143,219,0.14)'; ctx.fill();
+      ctx.strokeStyle = 'rgba(161,182,245,0.9)'; ctx.lineWidth = 1; ctx.stroke();
+    }
     if (p.reload > 0) { const w = WEAPONS[p.wi]; const f = 1 - p.reload / w.reload; ctx.fillStyle = P.dark; ctx.fillRect(Math.round(p.x) - 9, Math.round(p.y) - 27, 18, 4); ctx.fillStyle = P.yel; ctx.fillRect(Math.round(p.x) - 8, Math.round(p.y) - 26, Math.round(16 * f), 2); }
   }
   drawGun() {
@@ -561,6 +595,7 @@ class Play {
     const HW = CW / u, HH = CH / u, p = this.p;
     // health + gold
     bar(6, 6, 84, 12, p.hp / p.maxHp, 'red', 5);
+    bar(92, 6, 18, 12, p.shield / p.maxShield, 'blue', 1);
     spr('tiles', 225, 3, 19); ptext(String(SAVE.gold), 18, 20, 'A');
     // level info
     const left = Math.max(0, this.total - this.killed) + (this.bossDef && !this.bossDead ? 1 : 0);
