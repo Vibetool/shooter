@@ -364,7 +364,7 @@ function defaultSave() {
     stats: { kills: 0, goldEarned: 0, goldSpent: 0, chests: 0, deaths: 0, quests: 0, bosses: 0, playTime: 0, runs: 0 },
     npcs: { cat: { next: now, quest: null, count: 0 }, mouse: { next: now + STAGGER_MS, quest: null, count: 0 } }, lastJobAt: 0,
     upg: { regen: 0, fighter: 0, skill: 0, final: 0 },
-    pvpName: '', pvp: { wins: 0, losses: 0 },
+    pvpName: '', pvpUid: '', pvp: { wins: 0, losses: 0 },
     settings: { sfx: 0.8, music: 0.45, shake: 1, nums: 1 }
   };
 }
@@ -2427,6 +2427,9 @@ function shortGoal(q) {
    The public broker drops messages above ~10 per second per client (bursts
    included), so a duel sends 7 evenly spaced updates a second, never sends
    extra messages in between, and repeats every shot and knife swing once.
+   Admin tools (ban, kick, rename, reset record) are signed with a key derived
+   from the admin password; only its double hash lives here. Without a server
+   this stops casual tampering only: a modified copy of the game can ignore it.
    ========================================================================== */
 const PVP_LIBS = ['https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js', 'https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js'];
 const PVP_BROKERS = ['wss://broker-cn.emqx.io:8084/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
@@ -2438,6 +2441,18 @@ const PVP_HP = 200, PVP_MAP = 1, PVP_ASK_MS = 30000, PVP_SITE = 'https://vibetoo
 const PVP_ADJ = ['Swift', 'Dusty', 'Brave', 'Sly', 'Lucky', 'Rusty', 'Sandy', 'Wild', 'Quiet', 'Bold', 'Sunny', 'Grumpy'];
 const PVP_ANIMAL = ['Fox', 'Lizard', 'Hawk', 'Coyote', 'Gecko', 'Viper', 'Camel', 'Badger', 'Scorpion', 'Owl', 'Hare', 'Lynx'];
 const PVP_STATUS = { town: 'In town', run: 'On a run', duel: 'In a duel' };
+const PVP_ADMIN_SALT = 'dustwell-admin-v1', PVP_ADMIN_HASH = '27533efa96aba0d2bd99cc53f2000c1751b060b9ab3cf0aff3f3f959adb3bc83';
+async function sha256hex(s) {
+  const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+async function adminSigned(k) { try { return typeof k === 'string' && k.length === 64 && (await sha256hex(k)) === PVP_ADMIN_HASH; } catch (e) { return false; } }
+const cleanName = n => String(n).replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 16);
+function fitText(str, maxW, size, weight) {
+  if (textW(str, size, weight) <= maxW) return str;
+  let s = str; while (s.length > 1 && textW(s + '\u2026', size, weight) > maxW) s = s.slice(0, -1);
+  return s + '\u2026';
+}
 
 function loadScript(src) {
   return new Promise(res => {
@@ -2450,13 +2465,14 @@ function loadScript(src) {
 const PVP = {
   state: 'off', client: null, id: 'p' + Math.random().toString(36).slice(2, 10),
   players: {}, outgoing: null, invite: null, match: null, lastStatus: '', beat: 0,
+  bans: new Map(), banned: false, kicked: false, adminKey: null, adminFails: 0, adminLock: 0,
   name() {
     if (!SAVE.pvpName) { SAVE.pvpName = this.randomName(); persist(); }
     return SAVE.pvpName;
   },
   randomName() { return pick(R, PVP_ADJ) + ' ' + pick(R, PVP_ANIMAL) + ' ' + rint(R, 10, 99); },
   setName(n) {
-    n = String(n).replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 16);
+    n = cleanName(n);
     if (!n) return false;
     SAVE.pvpName = n; persist(); this.announce(true); return true;
   },
@@ -2464,6 +2480,8 @@ const PVP = {
   async start() {
     if (this.state !== 'off' && this.state !== 'failed') return;
     if (this.blocked()) { this.state = 'blocked'; return; }
+    if (!SAVE.pvpUid) { SAVE.pvpUid = 'p' + Math.random().toString(36).slice(2, 12); persist(); }
+    this.id = SAVE.pvpUid;
     this.state = 'loading';
     if (!window.mqtt) for (const src of PVP_LIBS) { if (await loadScript(src) && window.mqtt) break; }
     if (!window.mqtt) { this.state = 'failed'; return; }
@@ -2480,7 +2498,7 @@ const PVP = {
       });
       const done = ok => { if (settled) return; settled = true; if (!ok) { try { c.end(true); } catch (e) { /* closed */ } } resolve(ok); };
       c.on('connect', () => {
-        c.subscribe([PVP_PFX + 'p/+', PVP_PFX + 'u/' + this.id], { qos: 1 });
+        c.subscribe([PVP_PFX + 'p/+', PVP_PFX + 'u/' + this.id, PVP_PFX + 'bans'], { qos: 1 });
         if (this.match) c.subscribe(this.match.topic, { qos: 0 });
         if (!settled) { this.client = c; done(true); } else if (this.client === c) this.announce(true);
       });
@@ -2491,11 +2509,11 @@ const PVP = {
   },
   status() { return this.match ? 'duel' : SCENES.some(sc => sc instanceof Play && !(sc instanceof PvpMatch)) ? 'run' : 'town'; },
   announce(force) {
-    if (!this.client || this.state !== 'online') return;
+    if (!this.client || this.state !== 'online' || this.banned || this.kicked) return;
     const st = this.status();
     if (!force && st === this.lastStatus) return;
     this.lastStatus = st; this.beat = performance.now();
-    this.pub('p/' + this.id, { id: this.id, n: this.name(), s: st, v: 1 }, true);
+    this.pub('p/' + this.id, { id: this.id, n: this.name(), s: st, v: 1, w: SAVE.pvp.wins, l: SAVE.pvp.losses }, true);
   },
   pub(path, obj, retain = false, qos = 0) {
     if (this.client) this.client.publish(PVP_PFX + path, obj == null ? '' : JSON.stringify(obj), { qos, retain });
@@ -2513,17 +2531,20 @@ const PVP = {
     const rest = topic.slice(PVP_PFX.length), txt = typeof buf === 'string' ? buf : new TextDecoder().decode(buf);
     let m = null;
     if (txt) { try { m = JSON.parse(txt); } catch (e) { return; } }
+    if (rest === 'bans') { this.onBans(m); return; }
     if (rest.startsWith('p/')) {
       const id = rest.slice(2); if (id === this.id) return;
-      if (!m) delete this.players[id];
-      else this.players[id] = { id, name: String(m.n || 'Player').slice(0, 24), st: PVP_STATUS[m.s] ? m.s : 'town', seen: performance.now() };
+      const num = v => Math.max(0, Math.min(99999, Math.floor(Number(v)) || 0));
+      if (!m || this.bans.has(id)) delete this.players[id];
+      else this.players[id] = { id, name: String(m.n || 'Player').slice(0, 24), st: PVP_STATUS[m.s] ? m.s : 'town', w: num(m.w), l: num(m.l), seen: performance.now() };
     } else if (rest === 'u/' + this.id) { if (m && typeof m.from === 'string') this.onInbox(m); }
     else if (this.match && rest === 'm/' + this.match.mid) { if (m) this.match.onNet(m); }
   },
   onInbox(m) {
     const from = m.from, known = this.players[from];
+    if (m.t === 'admin') { adminSigned(m.k).then(ok => { if (ok) this.applyAdmin(m); }); return; }
     if (m.t === 'inv') {
-      if (this.match || this.invite) { this.send(from, { t: 'ans', mid: m.mid, ok: false, why: 'busy' }); return; }
+      if (this.match || this.invite || this.banned || this.kicked || this.bans.has(from)) { this.send(from, { t: 'ans', mid: m.mid, ok: false, why: 'busy' }); return; }
       if (this.outgoing) { this.send(this.outgoing.to, { t: 'cancel', mid: this.outgoing.mid }); this.outgoing = null; }
       this.invite = { from, name: String(m.n || (known && known.name) || 'A player').slice(0, 24), bo: m.bo === 3 ? 3 : 1, mid: String(m.mid), at: Date.now(), accepted: false };
       const top = topScene(); if (top instanceof Play && !(top instanceof PvpMatch)) top.paused = true;
@@ -2542,7 +2563,7 @@ const PVP = {
     }
   },
   challenge(pl, bo) {
-    if (this.outgoing || this.match || this.state !== 'online') return;
+    if (this.outgoing || this.match || this.state !== 'online' || this.banned || this.kicked || this.bans.has(pl.id)) return;
     const mid = this.id + '-' + Date.now().toString(36);
     this.outgoing = { to: pl.id, name: pl.name, bo, mid, at: Date.now() };
     this.send(pl.id, { t: 'inv', n: this.name(), bo, mid });
@@ -2562,7 +2583,41 @@ const PVP = {
     if (this.client && this.match) this.client.unsubscribe(this.match.topic);
     this.match = null; this.announce(true);
   },
-  openLobby() { setScene(new Home()); pushScene(new Levels()); pushScene(new PvpLobby()); }
+  openLobby() { setScene(new Home()); pushScene(new Levels()); pushScene(new PvpLobby()); },
+  /* ---- moderation ---- */
+  async onBans(m) {
+    if (!m || !Array.isArray(m.list) || !(await adminSigned(m.k))) return;
+    this.bans = new Map(m.list.filter(b => b && typeof b.id === 'string').map(b => [b.id, String(b.name || 'Player').slice(0, 24)]));
+    for (const id of this.bans.keys()) delete this.players[id];
+    const was = this.banned; this.banned = this.bans.has(this.id);
+    if (this.banned && !was) { this.goDark(); Game.toast('An admin banned you from PvP'); }
+    else if (!this.banned && was) this.announce(true);
+  },
+  applyAdmin(m) {
+    if (m.op === 'rename' && typeof m.name === 'string' && this.setName(m.name)) Game.toast('An admin changed your duel name to ' + SAVE.pvpName);
+    else if (m.op === 'reset') { SAVE.pvp.wins = 0; SAVE.pvp.losses = 0; persist(); this.announce(true); Game.toast('An admin reset your duel record'); }
+    else if (m.op === 'kick' && !this.kicked) { this.kicked = true; this.goDark(); Game.toast('An admin removed you from PvP'); }
+  },
+  goDark() {
+    if (this.match && this.match.phase !== 'over') this.match.finishDuel('quit');
+    if (this.outgoing) this.cancelChallenge();
+    if (this.invite) this.answer(false);
+    this.pub('p/' + this.id, null, true);
+  },
+  async tryAdmin(pin) {
+    if (!(window.crypto && crypto.subtle)) { Game.toast('Admin needs the https website'); return false; }
+    const k = await sha256hex(String(pin).trim() + PVP_ADMIN_SALT);
+    if (await adminSigned(k)) { this.adminKey = k; this.adminFails = 0; return true; }
+    if (++this.adminFails >= 5) { this.adminFails = 0; this.adminLock = Date.now() + 30000; }
+    return false;
+  },
+  adminOp(id, op, extra = {}) { if (this.adminKey) this.send(id, Object.assign({ t: 'admin', op, k: this.adminKey }, extra)); },
+  setBan(id, name, on) {
+    if (!this.adminKey || id === this.id) return;
+    const next = new Map(this.bans); if (on) next.set(id, name); else next.delete(id);
+    this.bans = next; if (on) delete this.players[id];
+    this.pub('bans', { k: this.adminKey, list: [...next].map(([bid, n]) => ({ id: bid, name: n })) }, true, 1);
+  }
 };
 setInterval(() => PVP.tick(), 1000);
 window.addEventListener('pagehide', () => { if (PVP.client) { PVP.pub('p/' + PVP.id, null, true); try { PVP.client.end(); } catch (e) { /* closing */ } } });
@@ -2580,7 +2635,14 @@ class PvpLobby extends MenuScene {
     const st = PVP.state, nameX = 30 + textW('You are ', 5.8, 500);
     stext('You are ', 30, 49, 5.8, P.dark, 'left', 500);
     stext(PVP.name(), nameX, 49, 6.4, P.dark, 'left', 700);
-    textButton(this, 'grey', nameX + textW(PVP.name(), 6.4, 700) + 8, 40, 56, 18, 'Rename', () => pushScene(new PvpRenameDialog()));
+    textButton(this, 'grey', nameX + textW(PVP.name(), 6.4, 700) + 8, 40, 56, 18, 'Rename', () => pushScene(new PvpTextDialog({
+      title: 'YOUR NAME', hint: 'Other players see this name. Up to 16 characters.', value: PVP.name(), random: true,
+      onSave: v => { if (PVP.setName(v)) { Game.toast('Name saved: ' + SAVE.pvpName); return true; } sfx('error-a'); Game.toast('Type a name first'); return false; }
+    })));
+    // small red square in the window corner: the admin door
+    const rx = (CW - M.ox) / M.s - 12, ry = -M.oy / M.s + 4;
+    const door = this.hit(rx - 3, ry - 3, 14, 14, () => pushScene(PVP.adminKey ? new PvpAdmin() : adminPinDialog()));
+    ctx.fillStyle = P.dark; ctx.fillRect(rx, ry, 8, 8); ctx.fillStyle = door ? P.redL : P.red; ctx.fillRect(rx + 1, ry + 1, 6, 6);
     const pill = { online: ['Online', P.teal], loading: ['Connecting', P.yel], connecting: ['Connecting', P.yel], failed: ['Offline', P.lav], blocked: ['Website only', P.lav], off: ['Offline', P.lav] }[st];
     const pw = textW(pill[0], 5.2, 700) + 12;
     ctx.fillStyle = P.dark; ctx.fillRect(430 - pw, 42, pw, 13); ctx.fillStyle = pill[1]; ctx.fillRect(431 - pw, 43, pw - 2, 11);
@@ -2588,7 +2650,9 @@ class PvpLobby extends MenuScene {
     stext(`Every gun is unlocked, both players have ${PVP_HP} health, map: Cactus Flats (Level 2)`, 230, 64, 5, P.dark, 'center', 500);
     panel('blue', 30, 72, 400, 148);
     const say = (lines, y0 = 112) => lines.forEach((l, k) => stext(l, 230, y0 + k * 11, k === 0 ? 6.4 : 5.4, P.white, 'center', k === 0 ? 700 : 500));
-    if (st === 'blocked') say(['Duels need the website version of the game', 'Open ' + PVP_SITE + ' in your browser', 'and press PVP on the level screen.']);
+    if (PVP.banned) say(['You are banned from PvP', 'An admin banned this player for unfair play.']);
+    else if (PVP.kicked) say(['An admin removed you from PvP', 'Reload the game to come back later.']);
+    else if (st === 'blocked') say(['Duels need the website version of the game', 'Open ' + PVP_SITE + ' in your browser', 'and press PVP on the level screen.']);
     else if (st === 'loading' || st === 'connecting' || st === 'off') say(['Connecting to the duel server...', 'This takes a few seconds.']);
     else if (st === 'failed') {
       say(['Could not reach the duel server', 'Check your connection and try again.'], 104);
@@ -2600,8 +2664,9 @@ class PvpLobby extends MenuScene {
       list.slice(this.scroll, this.scroll + rows).forEach((pl, k) => {
         const y = 82 + k * 26, free = pl.st !== 'duel' && !PVP.outgoing;
         if (k) { ctx.fillStyle = 'rgba(71,50,75,0.35)'; ctx.fillRect(42, y - 3, 376, 1); }
-        stext(pl.name, 46, y + 9, 6.4, P.white, 'left', 700);
-        stext(PVP_STATUS[pl.st], 190, y + 9, 5.2, P.yelL, 'left', 600);
+        stext(fitText(pl.name, 108, 6.4, 700), 46, y + 9, 6.4, P.white, 'left', 700);
+        stext(`${pl.w} ${pl.w === 1 ? 'win' : 'wins'}`, 160, y + 9, 5.4, P.yelL, 'left', 700);
+        stext(PVP_STATUS[pl.st], 214, y + 9, 5.2, P.lavL, 'left', 600);
         ctx.globalAlpha = free ? 1 : 0.45;
         textButton(this, 'grey', 282, y + 1, 58, 17, 'One round', free ? () => PVP.challenge(pl, 1) : null);
         textButton(this, 'grey', 346, y + 1, 70, 17, 'Best of three', free ? () => PVP.challenge(pl, 3) : null);
@@ -2620,19 +2685,24 @@ class PvpLobby extends MenuScene {
   }
 }
 
-/* ---------------- choose your own duel name (a real text box, so any language works) ---------------- */
-class PvpRenameDialog extends MenuScene {
-  constructor() {
-    super();
+/* ---------------- a small dialog with a real text box (names in any language, passwords) ---------------- */
+class PvpTextDialog extends MenuScene {
+  constructor(o) {
+    super(); this.o = o;
     const el = this.el = document.createElement('input');
-    el.id = 'pvp-name'; el.type = 'text'; el.maxLength = 16; el.value = PVP.name(); el.autocomplete = 'off'; el.spellcheck = false;
-    el.setAttribute('aria-label', 'Your duel name');
+    el.id = 'pvp-text'; el.type = o.type || 'text'; el.maxLength = o.maxLen || 16; el.value = o.value || ''; el.autocomplete = 'off'; el.spellcheck = false;
+    if (o.type === 'password') el.inputMode = 'numeric';
+    el.setAttribute('aria-label', o.title);
     Object.assign(el.style, { position: 'fixed', zIndex: 5, boxSizing: 'border-box', border: '2px solid #47324b', borderRadius: '0', background: '#ffffff', color: '#47324b', padding: '0 8px', fontFamily: FONT, fontWeight: '600', outline: 'none' });
     el.addEventListener('keydown', e => { if (e.isComposing) return; if (e.key === 'Enter') { e.preventDefault(); this.save(); } else if (e.key === 'Escape') { e.preventDefault(); this.close(); } });
     document.body.appendChild(el);
     setTimeout(() => { el.focus(); el.select(); }, 0);
   }
-  save() { if (PVP.setName(this.el.value)) { Game.toast('Name saved: ' + SAVE.pvpName); this.close(); } else { sfx('error-a'); Game.toast('Type a name first'); } }
+  async save() {
+    if (this.busy) return; this.busy = true;
+    const ok = await this.o.onSave(this.el.value); this.busy = false;
+    if (ok) { this.close(); if (this.o.after) this.o.after(); } else this.el.focus();
+  }
   close() { this.el.remove(); popScene(this); }
   key(k) { if (k === 'escape') this.close(); }
   draw() {
@@ -2640,20 +2710,85 @@ class PvpRenameDialog extends MenuScene {
     const x = 120, y = 70, w = 220, h = 110;
     this.hit(x, y, w, h, () => this.el.focus());
     panel('grey', x, y, w, h);
-    ptext('YOUR NAME', x + w / 2, y + 10, 'B', 'center');
-    stext('Other players see this name. Up to 16 characters.', x + w / 2, y + 33, 4.8, P.dark, 'center', 500);
+    ptext(this.o.title, x + w / 2, y + 10, 'B', 'center');
+    stext(this.o.hint, x + w / 2, y + 33, 4.8, P.dark, 'center', 500);
     // keep the text box glued to the dialog at any window size
-    const bx = x + 20, by = y + 42, bw = w - 40, bh = 20, s = this.el.style;
-    s.left = (M.ox + bx * M.s) / DPR + 'px'; s.top = (M.oy + by * M.s) / DPR + 'px';
-    s.width = bw * M.s / DPR + 'px'; s.height = bh * M.s / DPR + 'px'; s.fontSize = Math.max(12, bh * M.s / DPR * 0.5) + 'px';
-    textButton(this, 'red', x + 20, y + 72, 56, 21, 'Save', () => this.save());
-    textButton(this, 'grey', x + 82, y + 72, 56, 21, 'Random', () => { this.el.value = PVP.randomName(); this.el.focus(); });
-    textButton(this, 'grey', x + 144, y + 72, 56, 21, 'Cancel', () => this.close());
+    const bx = x + 20, by = y + 42, bw = w - 40, bh = 20, st = this.el.style;
+    st.left = (M.ox + bx * M.s) / DPR + 'px'; st.top = (M.oy + by * M.s) / DPR + 'px';
+    st.width = bw * M.s / DPR + 'px'; st.height = bh * M.s / DPR + 'px'; st.fontSize = Math.max(12, bh * M.s / DPR * 0.5) + 'px';
+    if (this.o.random) {
+      textButton(this, 'red', x + 20, y + 72, 56, 21, this.o.ok || 'Save', () => this.save());
+      textButton(this, 'grey', x + 82, y + 72, 56, 21, 'Random', () => { this.el.value = PVP.randomName(); this.el.focus(); });
+      textButton(this, 'grey', x + 144, y + 72, 56, 21, 'Cancel', () => this.close());
+    } else {
+      textButton(this, 'red', x + 40, y + 72, 64, 21, this.o.ok || 'Save', () => this.save());
+      textButton(this, 'grey', x + 116, y + 72, 64, 21, 'Cancel', () => this.close());
+    }
     this.end();
   }
 }
 // if the dialog is swept away (for example by accepting a duel), drop its text box too
-setInterval(() => { const el = document.getElementById('pvp-name'); if (el && !SCENES.some(s => s instanceof PvpRenameDialog)) el.remove(); }, 250);
+setInterval(() => { const el = document.getElementById('pvp-text'); if (el && !SCENES.some(sc => sc instanceof PvpTextDialog)) el.remove(); }, 250);
+
+/* ---------------- admin: the password door and the moderation panel ---------------- */
+function adminPinDialog() {
+  return new PvpTextDialog({
+    title: 'ADMIN', hint: 'Enter the admin password.', type: 'password', maxLen: 12, ok: 'Enter',
+    onSave: async v => {
+      if (Date.now() < PVP.adminLock) { sfx('error-a'); Game.toast('Too many wrong tries. Wait 30 seconds.'); return false; }
+      if (await PVP.tryAdmin(v)) { sfx('coin-d', 0.6); Game.toast('Admin tools unlocked'); return true; }
+      sfx('error-a'); Game.toast('Wrong password'); return false;
+    },
+    after: () => pushScene(new PvpAdmin())
+  });
+}
+class PvpAdmin extends MenuScene {
+  constructor() { super(); this.scroll = 0; }
+  key(k) { if (k === 'escape') popScene(this); }
+  wheel(d) { this.scroll = Math.max(0, this.scroll + d); }
+  draw() {
+    dim(); this.begin();
+    const x = 14, y = 4, w = 432, h = 250;
+    this.hit(x, y, w, h, () => {});
+    panel('grey', x, y, w, h);
+    ptext('ADMIN', x + w / 2, y + 9, 'B', 'center');
+    if (PVP.state !== 'online') stext('Not connected to the duel server.', x + w / 2, y + 120, 6, P.dark, 'center', 700);
+    // online players
+    stext('Online players', x + 16, y + 34, 6, P.dark, 'left', 700);
+    const list = Object.values(PVP.players).sort((a, b) => a.name.localeCompare(b.name)), rows = 4;
+    this.scroll = Math.min(this.scroll, Math.max(0, list.length - rows));
+    if (!list.length) stext('No one else is online.', x + 16, y + 50, 5.2, P.dark, 'left', 500);
+    list.slice(this.scroll, this.scroll + rows).forEach((pl, k) => {
+      const ry = y + 42 + k * 20, bx = x + w - 16 - 4 * 44;
+      ctx.fillStyle = 'rgba(71,50,75,0.14)'; ctx.fillRect(x + 12, ry, w - 24, 18);
+      stext(fitText(pl.name, 100, 5.6, 700), x + 18, ry + 9, 5.6, P.dark, 'left', 700);
+      stext(`${pl.w} W  ${pl.l} L`, x + 128, ry + 9, 5, P.redD, 'left', 700);
+      stext(PVP_STATUS[pl.st], x + 176, ry + 9, 5, P.dark, 'left', 500);
+      textButton(this, 'red', bx, ry + 1, 40, 16, 'Ban', () => pushScene(new Confirm(`Ban ${pl.name}?`, 'They can no longer use PvP.', 'Ban', () => { PVP.setBan(pl.id, pl.name, true); Game.toast(pl.name + ' is banned'); })));
+      textButton(this, 'grey', bx + 44, ry + 1, 40, 16, 'Kick', () => { PVP.adminOp(pl.id, 'kick'); delete PVP.players[pl.id]; Game.toast(pl.name + ' was removed from PvP'); });
+      textButton(this, 'grey', bx + 88, ry + 1, 40, 16, 'Reset', () => pushScene(new Confirm(`Reset ${pl.name}?`, 'Their duel wins and losses go back to 0.', 'Reset', () => { PVP.adminOp(pl.id, 'reset'); pl.w = 0; pl.l = 0; Game.toast(pl.name + "'s record was reset"); })));
+      textButton(this, 'grey', bx + 132, ry + 1, 40, 16, 'Rename', () => pushScene(new PvpTextDialog({
+        title: 'RENAME', hint: 'New duel name for ' + pl.name, value: pl.name,
+        onSave: v => { const n = cleanName(v); if (!n) { sfx('error-a'); Game.toast('Type a name first'); return false; } PVP.adminOp(pl.id, 'rename', { name: n }); Game.toast(`${pl.name} is now ${n}`); pl.name = n; return true; }
+      })));
+    });
+    if (list.length > rows) stext(`Scroll for more (${list.length} online)`, x + w - 16, y + 34, 4.6, P.dark, 'right', 500);
+    // banned players
+    stext('Banned players', x + 16, y + 132, 6, P.dark, 'left', 700);
+    const bans = [...PVP.bans];
+    if (!bans.length) stext('Nobody is banned.', x + 16, y + 148, 5.2, P.dark, 'left', 500);
+    bans.slice(0, 3).forEach(([id, name], k) => {
+      const ry = y + 140 + k * 20;
+      ctx.fillStyle = 'rgba(71,50,75,0.14)'; ctx.fillRect(x + 12, ry, w - 24, 18);
+      stext(fitText(name, 160, 5.6, 700), x + 18, ry + 9, 5.6, P.dark, 'left', 700);
+      textButton(this, 'grey', x + w - 60, ry + 1, 44, 16, 'Unban', () => { PVP.setBan(id, name, false); Game.toast(name + ' can use PvP again'); });
+    });
+    if (bans.length > 3) stext(`and ${bans.length - 3} more`, x + 16, y + 206, 4.8, P.dark, 'left', 500);
+    stext('These tools only reach players using the official game.', x + w / 2, y + 214, 4.6, P.dark, 'center', 500);
+    textButton(this, 'grey', x + w / 2 - 32, y + h - 28, 64, 21, 'Done', () => popScene(this));
+    this.end();
+  }
+}
 
 /* ---------------- popup on the challenged player's screen ---------------- */
 class PvpInviteDialog extends MenuScene {
