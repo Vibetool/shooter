@@ -11,8 +11,9 @@
 const PVP_LIBS = ['https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js', 'https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js'];
 const PVP_BROKERS = ['wss://broker-cn.emqx.io:8084/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
 const PVP_PFX = 'dustwell-shooter/v1/';
-/* in a duel, after 3 s without being hit, holding P heals 10 health a second */
-const PVP_HEAL_WAIT = 3, PVP_HEAL_RATE = 10;
+/* in a duel you regenerate 3 health a second once 1 s has passed since the last hit;
+   after 3 s, holding P heals 10 a second instead (the two do not stack) */
+const PVP_REGEN_WAIT = 1, PVP_REGEN_RATE = 3, PVP_HEAL_WAIT = 3, PVP_HEAL_RATE = 10;
 const PVP_HP = 200, PVP_MAP = 1, PVP_ASK_MS = 30000, PVP_SITE = 'https://vibetool.github.io/shooter/', PVP_RATE = 7;
 const PVP_ADJ = ['Swift', 'Dusty', 'Brave', 'Sly', 'Lucky', 'Rusty', 'Sandy', 'Wild', 'Quiet', 'Bold', 'Sunny', 'Grumpy'];
 const PVP_ANIMAL = ['Fox', 'Lizard', 'Hawk', 'Coyote', 'Gecko', 'Viper', 'Camel', 'Badger', 'Scorpion', 'Owl', 'Hare', 'Lynx'];
@@ -30,10 +31,15 @@ const PVP = {
   state: 'off', client: null, id: 'p' + Math.random().toString(36).slice(2, 10),
   players: {}, outgoing: null, invite: null, match: null, lastStatus: '', beat: 0,
   name() {
-    if (!SAVE.pvpName) { SAVE.pvpName = pick(R, PVP_ADJ) + ' ' + pick(R, PVP_ANIMAL) + ' ' + rint(R, 10, 99); persist(); }
+    if (!SAVE.pvpName) { SAVE.pvpName = this.randomName(); persist(); }
     return SAVE.pvpName;
   },
-  rename() { SAVE.pvpName = ''; this.name(); this.announce(true); },
+  randomName() { return pick(R, PVP_ADJ) + ' ' + pick(R, PVP_ANIMAL) + ' ' + rint(R, 10, 99); },
+  setName(n) {
+    n = String(n).replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 16);
+    if (!n) return false;
+    SAVE.pvpName = n; persist(); this.announce(true); return true;
+  },
   blocked() { return !!(window.claude && typeof window.claude.use === 'function'); },
   async start() {
     if (this.state !== 'off' && this.state !== 'failed') return;
@@ -154,7 +160,7 @@ class PvpLobby extends MenuScene {
     const st = PVP.state, nameX = 30 + textW('You are ', 5.8, 500);
     stext('You are ', 30, 49, 5.8, P.dark, 'left', 500);
     stext(PVP.name(), nameX, 49, 6.4, P.dark, 'left', 700);
-    textButton(this, 'grey', nameX + textW(PVP.name(), 6.4, 700) + 8, 40, 56, 18, 'New name', () => PVP.rename());
+    textButton(this, 'grey', nameX + textW(PVP.name(), 6.4, 700) + 8, 40, 56, 18, 'Rename', () => pushScene(new PvpRenameDialog()));
     const pill = { online: ['Online', P.teal], loading: ['Connecting', P.yel], connecting: ['Connecting', P.yel], failed: ['Offline', P.lav], blocked: ['Website only', P.lav], off: ['Offline', P.lav] }[st];
     const pw = textW(pill[0], 5.2, 700) + 12;
     ctx.fillStyle = P.dark; ctx.fillRect(430 - pw, 42, pw, 13); ctx.fillStyle = pill[1]; ctx.fillRect(431 - pw, 43, pw - 2, 11);
@@ -193,6 +199,41 @@ class PvpLobby extends MenuScene {
     this.end();
   }
 }
+
+/* ---------------- choose your own duel name (a real text box, so any language works) ---------------- */
+class PvpRenameDialog extends MenuScene {
+  constructor() {
+    super();
+    const el = this.el = document.createElement('input');
+    el.id = 'pvp-name'; el.type = 'text'; el.maxLength = 16; el.value = PVP.name(); el.autocomplete = 'off'; el.spellcheck = false;
+    el.setAttribute('aria-label', 'Your duel name');
+    Object.assign(el.style, { position: 'fixed', zIndex: 5, boxSizing: 'border-box', border: '2px solid #47324b', borderRadius: '0', background: '#ffffff', color: '#47324b', padding: '0 8px', fontFamily: FONT, fontWeight: '600', outline: 'none' });
+    el.addEventListener('keydown', e => { if (e.isComposing) return; if (e.key === 'Enter') { e.preventDefault(); this.save(); } else if (e.key === 'Escape') { e.preventDefault(); this.close(); } });
+    document.body.appendChild(el);
+    setTimeout(() => { el.focus(); el.select(); }, 0);
+  }
+  save() { if (PVP.setName(this.el.value)) { Game.toast('Name saved: ' + SAVE.pvpName); this.close(); } else { sfx('error-a'); Game.toast('Type a name first'); } }
+  close() { this.el.remove(); popScene(this); }
+  key(k) { if (k === 'escape') this.close(); }
+  draw() {
+    dim(); this.begin();
+    const x = 120, y = 70, w = 220, h = 110;
+    this.hit(x, y, w, h, () => this.el.focus());
+    panel('grey', x, y, w, h);
+    ptext('YOUR NAME', x + w / 2, y + 10, 'B', 'center');
+    stext('Other players see this name. Up to 16 characters.', x + w / 2, y + 33, 4.8, P.dark, 'center', 500);
+    // keep the text box glued to the dialog at any window size
+    const bx = x + 20, by = y + 42, bw = w - 40, bh = 20, s = this.el.style;
+    s.left = (M.ox + bx * M.s) / DPR + 'px'; s.top = (M.oy + by * M.s) / DPR + 'px';
+    s.width = bw * M.s / DPR + 'px'; s.height = bh * M.s / DPR + 'px'; s.fontSize = Math.max(12, bh * M.s / DPR * 0.5) + 'px';
+    textButton(this, 'red', x + 20, y + 72, 56, 21, 'Save', () => this.save());
+    textButton(this, 'grey', x + 82, y + 72, 56, 21, 'Random', () => { this.el.value = PVP.randomName(); this.el.focus(); });
+    textButton(this, 'grey', x + 144, y + 72, 56, 21, 'Cancel', () => this.close());
+    this.end();
+  }
+}
+// if the dialog is swept away (for example by accepting a duel), drop its text box too
+setInterval(() => { const el = document.getElementById('pvp-name'); if (el && !SCENES.some(s => s instanceof PvpRenameDialog)) el.remove(); }, 250);
 
 /* ---------------- popup on the challenged player's screen ---------------- */
 class PvpInviteDialog extends MenuScene {
@@ -356,13 +397,15 @@ class PvpMatch extends Play {
       else { this.round++; this.resetRound(); }
     }
     this.fightT = Math.max(0, (this.fightT || 0) - dt);
-    // healing: hold P (or the + button on touch) once 3 s have passed since the last hit
+    // healing: 3 a second after 1 s without a hit; hold P (or + on touch) after 3 s for 10 a second
     this.sinceHit += dt;
-    this.healing = this.phase === 'fight' && !p.dead && !this.paused && p.hp < PVP_HP && this.sinceHit >= PVP_HEAL_WAIT && (IN.keys.p || this.tHeal != null);
-    if (this.healing) {
-      const add = Math.min(PVP_HEAL_RATE * dt, PVP_HP - p.hp); p.hp += add;
-      if ((this.healAcc += add) >= PVP_HEAL_RATE) { this.healAcc -= PVP_HEAL_RATE; this.nums.push({ x: p.x, y: p.y - 22, t: 0.7, v: '+' + PVP_HEAL_RATE, col: P.teal }); }
-      if (R() < 0.3) this.spark(p.x + (R() - 0.5) * 10, p.y - 10, 1, P.teal);
+    const hurt = this.phase === 'fight' && !p.dead && p.hp < PVP_HP;
+    this.healing = hurt && !this.paused && this.sinceHit >= PVP_HEAL_WAIT && (IN.keys.p || this.tHeal != null);
+    const rate = this.healing ? PVP_HEAL_RATE : hurt && this.sinceHit >= PVP_REGEN_WAIT ? PVP_REGEN_RATE : 0;
+    if (rate) {
+      const add = Math.min(rate * dt, PVP_HP - p.hp); p.hp += add;
+      if ((this.healAcc += add) >= 10) { this.healAcc -= 10; this.nums.push({ x: p.x, y: p.y - 22, t: 0.7, v: '+10', col: P.teal }); }
+      if (this.healing && R() < 0.3) this.spark(p.x + (R() - 0.5) * 10, p.y - 10, 1, P.teal);
     }
     this.controlPlayer(dt);
     // the other duelist glides toward their last reported spot
@@ -458,9 +501,12 @@ class PvpMatch extends Play {
     stextO('Q or wheel: switch gun. 1-8: pick one, press twice for green.', 6, HH - 46, 4.4, P.white, P.dark, 'left', 600, 1.6);
     // heal status under your health bar
     if (!p.dead && p.hp < PVP_HP && this.phase === 'fight') {
-      const key = IN.touch ? 'the + button' : 'P', wait = PVP_HEAL_WAIT - this.sinceHit;
-      const msg = this.healing ? `Healing +${PVP_HEAL_RATE} a second` : wait > 0 ? `Heal ready in ${wait.toFixed(1)}s` : `Hold ${key} to heal`;
-      stextO(msg, 8, 33, 4.8, this.healing || wait <= 0 ? P.teal : P.white, P.dark, 'left', 700, 1.8);
+      const key = IN.touch ? '+' : 'P', regenIn = PVP_REGEN_WAIT - this.sinceHit, healIn = PVP_HEAL_WAIT - this.sinceHit;
+      const msg = this.healing ? `Healing +${PVP_HEAL_RATE} a second`
+        : regenIn > 0 ? `Regen starts in ${regenIn.toFixed(1)}s`
+        : healIn > 0 ? `Regen +${PVP_REGEN_RATE} a second. Hold ${key} in ${healIn.toFixed(1)}s for +${PVP_HEAL_RATE}`
+        : `Regen +${PVP_REGEN_RATE} a second. Hold ${key} for +${PVP_HEAL_RATE}`;
+      stextO(msg, 8, 33, 4.8, regenIn > 0 ? P.white : P.teal, P.dark, 'left', 700, 1.8);
     }
     // round banners
     let lines = null, sub = '';

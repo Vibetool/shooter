@@ -284,14 +284,16 @@ const topScene = () => SCENES[SCENES.length - 1];
 function setScene(s) { SCENES = [s]; }
 function pushScene(s) { SCENES.push(s); }
 function popScene(s) { const i = SCENES.lastIndexOf(s || topScene()); if (i > 0) SCENES.splice(i, 1); }
+const typing = e => e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA');
 window.addEventListener('keydown', e => {
+  if (typing(e)) return;
   const k = e.key.toLowerCase();
   if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'tab'].includes(k)) e.preventDefault();
   audioUnlock();
   if (!IN.keys[k]) { const s = topScene(); if (s && s.key) s.key(k, e); }
   IN.keys[k] = true;
 });
-window.addEventListener('keyup', e => { IN.keys[e.key.toLowerCase()] = false; });
+window.addEventListener('keyup', e => { if (!typing(e)) IN.keys[e.key.toLowerCase()] = false; });
 cv.addEventListener('mousemove', e => { IN.mx = e.clientX * DPR; IN.my = e.clientY * DPR; IN.touch = false; });
 cv.addEventListener('mousedown', e => {
   audioUnlock(); cv.focus();
