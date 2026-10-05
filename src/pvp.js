@@ -11,6 +11,8 @@
 const PVP_LIBS = ['https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js', 'https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js'];
 const PVP_BROKERS = ['wss://broker-cn.emqx.io:8084/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
 const PVP_PFX = 'dustwell-shooter/v1/';
+/* in a duel, after 3 s without being hit, holding P heals 10 health a second */
+const PVP_HEAL_WAIT = 3, PVP_HEAL_RATE = 10;
 const PVP_HP = 200, PVP_MAP = 1, PVP_ASK_MS = 30000, PVP_SITE = 'https://vibetool.github.io/shooter/', PVP_RATE = 7;
 const PVP_ADJ = ['Swift', 'Dusty', 'Brave', 'Sly', 'Lucky', 'Rusty', 'Sandy', 'Wild', 'Quiet', 'Bold', 'Sunny', 'Grumpy'];
 const PVP_ANIMAL = ['Fox', 'Lizard', 'Hawk', 'Coyote', 'Gecko', 'Viper', 'Camel', 'Badger', 'Scorpion', 'Owl', 'Hare', 'Lynx'];
@@ -262,6 +264,7 @@ class PvpMatch extends Play {
     if (p.wi >= 0) p.ammo = WEAPONS[p.wi].mag;
     Object.assign(o, { x: them.x, y: them.y, tx: them.x, ty: them.y, hp: PVP_HP, dead: false, knifeT: 0 });
     this.bullets = []; this.obullets = []; this.outShots = []; this.prevShots = []; this.outKnife = this.prevKnife = null; this.roundResult = '';
+    this.sinceHit = 99; this.healAcc = 0; this.healing = false;
     this.phase = 'countdown'; this.phaseT = 3; this.noInput = true; this.snapCam();
   }
   onShots(list) {
@@ -294,6 +297,7 @@ class PvpMatch extends Play {
     o.moving = !!m.mv;
     if (typeof m.hp === 'number') {
       if (m.hp < o.hp && SAVE.settings.nums) this.nums.push({ x: o.x, y: o.y - 22, t: 0.7, v: Math.round((o.hp - m.hp) * 10) / 10 });
+      if (m.hp > o.hp + 0.5 && !o.dead) this.spark(o.x + (R() - 0.5) * 10, o.y - 10, 3, P.teal);
       o.hp = Math.max(0, m.hp);
     }
     if (Array.isArray(m.k)) for (const k of m.k) if (Array.isArray(k) && Number.isFinite(k[1]) && this.fresh(k[0])) { o.knifeT = 0.2; o.knifeA = k[1]; this.knifeFrom(k[1]); }
@@ -322,7 +326,7 @@ class PvpMatch extends Play {
   }
   takeHit(dmg, b) {
     const p = this.p; if (p.dead || p.inv > 0 || this.phase !== 'fight') return;
-    p.hp = Math.max(0, p.hp - dmg);
+    p.hp = Math.max(0, p.hp - dmg); this.sinceHit = 0;
     if (SAVE.settings.nums) this.nums.push({ x: p.x, y: p.y - 22, t: 0.7, v: Math.round(dmg * 10) / 10, col: P.redL });
     sfx('hurt-a', 0.45, 1, 0.08); if (SAVE.settings.shake) this.shake = Math.max(this.shake, 3);
     if (b) { const sp = Math.hypot(b.vx, b.vy) || 1; p.vx += b.vx / sp * 40; p.vy += b.vy / sp * 40; }
@@ -352,6 +356,14 @@ class PvpMatch extends Play {
       else { this.round++; this.resetRound(); }
     }
     this.fightT = Math.max(0, (this.fightT || 0) - dt);
+    // healing: hold P (or the + button on touch) once 3 s have passed since the last hit
+    this.sinceHit += dt;
+    this.healing = this.phase === 'fight' && !p.dead && !this.paused && p.hp < PVP_HP && this.sinceHit >= PVP_HEAL_WAIT && (IN.keys.p || this.tHeal != null);
+    if (this.healing) {
+      const add = Math.min(PVP_HEAL_RATE * dt, PVP_HP - p.hp); p.hp += add;
+      if ((this.healAcc += add) >= PVP_HEAL_RATE) { this.healAcc -= PVP_HEAL_RATE; this.nums.push({ x: p.x, y: p.y - 22, t: 0.7, v: '+' + PVP_HEAL_RATE, col: P.teal }); }
+      if (R() < 0.3) this.spark(p.x + (R() - 0.5) * 10, p.y - 10, 1, P.teal);
+    }
     this.controlPlayer(dt);
     // the other duelist glides toward their last reported spot
     if (Math.hypot(o.tx - o.x, o.ty - o.y) > 90) { o.x = o.tx; o.y = o.ty; }
@@ -399,7 +411,13 @@ class PvpMatch extends Play {
     const [mx, my] = toMenu(px, py);
     for (let i = this.hot.length - 1; i >= 0; i--) { const h = this.hot[i]; if (mx >= h.x && my >= h.y && mx < h.x + h.w && my < h.y + h.h) { sfx('select-a', 0.7); h.fn(); return; } }
   }
-  touchStart(id, x, y) { if (this.paused || this.phase === 'over') { IN.mx = x; IN.my = y; this.click(x, y); return; } super.touchStart(id, x, y); }
+  healBtn() { const u = this.hudScale(), HW = CW / u, HH = CH / u; return { x: (HW - 46) * u, y: (HH - 26) * u, w: 22 * u, h: 22 * u }; }
+  touchStart(id, x, y) {
+    if (this.paused || this.phase === 'over') { IN.mx = x; IN.my = y; this.click(x, y); return; }
+    const b = this.healBtn(); if (x >= b.x && y >= b.y && x < b.x + b.w && y < b.y + b.h) { this.tHeal = id; return; }
+    super.touchStart(id, x, y);
+  }
+  touchEnd(id) { if (this.tHeal === id) this.tHeal = null; super.touchEnd(id); }
   leave() { this.finishDuel('quit'); PVP.openLobby(); }
   drawOpp() {
     const o = this.opp, flip = Math.cos(o.aim) < 0;
@@ -438,6 +456,12 @@ class PvpMatch extends Play {
     stextO(w ? w.name : 'Knife', 36, HH - 28, 5.2, P.white, P.dark, 'left', 700, 2);
     stextO(!w ? 'Click to swing' : p.reload > 0 ? 'Reloading' : `${p.ammo} / ${w.mag}`, 36, HH - 18, 5.4, w && (p.ammo === 0 || p.reload > 0) ? P.yelL : P.white, P.dark, 'left', 700, 2);
     stextO('Q or wheel: switch gun. 1-8: pick one, press twice for green.', 6, HH - 46, 4.4, P.white, P.dark, 'left', 600, 1.6);
+    // heal status under your health bar
+    if (!p.dead && p.hp < PVP_HP && this.phase === 'fight') {
+      const key = IN.touch ? 'the + button' : 'P', wait = PVP_HEAL_WAIT - this.sinceHit;
+      const msg = this.healing ? `Healing +${PVP_HEAL_RATE} a second` : wait > 0 ? `Heal ready in ${wait.toFixed(1)}s` : `Hold ${key} to heal`;
+      stextO(msg, 8, 33, 4.8, this.healing || wait <= 0 ? P.teal : P.white, P.dark, 'left', 700, 1.8);
+    }
     // round banners
     let lines = null, sub = '';
     if (this.phase === 'countdown') { lines = [String(Math.max(1, Math.ceil(this.phaseT)))]; sub = this.round === 1 ? `Duel with ${this.oppName}` : `Round ${this.round}`; }
@@ -448,7 +472,10 @@ class PvpMatch extends Play {
       panel('red', bx, by, lw, bh); ptext(lines[0], HW / 2, by + 16, 'B', 'center');
       if (sub) stextO(sub, HW / 2, by + bh + 9, 6, P.white, P.dark, 'center', 700, 2.2);
     }
-    if (IN.touch) { ctx.globalAlpha = 0.6; btn('grey', HW - 22, HH - 24, 18, 18, false); stext('II', HW - 13, HH - 15.5, 6, P.dark, 'center', 700); ctx.globalAlpha = 1; }
+    if (IN.touch) {
+      ctx.globalAlpha = 0.6; btn('grey', HW - 22, HH - 24, 18, 18, false); stext('II', HW - 13, HH - 15.5, 6, P.dark, 'center', 700);
+      ctx.globalAlpha = this.tHeal != null ? 1 : 0.7; btn('grey', HW - 44, HH - 24, 18, 18, false); stext('+', HW - 35, HH - 15.5, 8, P.dark, 'center', 700); ctx.globalAlpha = 1;
+    }
     this.hot = [];
     if (this.phase === 'over') this.drawDuelResult();
     else if (this.paused) this.drawLeave();

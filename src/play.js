@@ -642,7 +642,8 @@ class Play {
   touchStart(id, x, y) {
     if (this.paused || this.result) { IN.mx = x; IN.my = y; this.click(x, y); return; }
     // pause button (top-right corner)
-    const u = this.hudScale(); if (x > CW - 30 * u && y < 30 * u && x < CW && y > 0 && y < 24 * u && x > CW - 24 * u) { this.paused = true; return; }
+    const u = this.hudScale(), HW = CW / u, HH = CH / u;
+    if (x >= (HW - 24) * u && y >= (HH - 26) * u && x < (HW - 2) * u && y < (HH - 4) * u) { this.paused = true; return; }
     if (x < CW * 0.45 && !this.tMove) this.tMove = id;
     else if (!this.tAim) this.tAim = id;
   }
