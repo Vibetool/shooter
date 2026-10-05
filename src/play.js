@@ -31,6 +31,8 @@ class Play {
     this.tMove = null; this.tAim = null;
     if (opts.pvp) { this.chests = []; this.meds = []; this.banner = null; this.upg = { regen: 0, fighter: 0, skill: 0, final: 0 }; this.snapCam(); return; }
     SAVE.stats.runs++; persist();
+    // tutorial: Mira's hints for this run (see Coach in ui.js)
+    Coach.finish('welcome'); this.coach = Coach.pending(); this.coachStep = null; this.coachT = 0; this.coachMoved = 0; this.coachShots = 0;
     Game.toast('Shield ready: it blocks 1 damage and recharges');
     Music.intensity = 1;
     const initial = Math.min(this.total, Math.ceil(this.cap * 0.6));
@@ -150,7 +152,7 @@ class Play {
     if (p.reload > 0 || p.cd > 0) return;
     if (p.ammo <= 0) { this.startReload(); return; }
     const w = WEAPONS[p.wi];
-    p.cd = 1 / w.rate; p.ammo--;
+    p.cd = 1 / w.rate; p.ammo--; this.coachShots++;
     const ox = p.x + Math.cos(p.aim) * 12, oy = p.y - 6 + Math.sin(p.aim) * 12, first = this.bullets.length;
     for (let k = 0; k < w.pellets; k++) {
       const a = p.aim + (R() - 0.5) * (w.spread * Math.PI / 180);
@@ -358,6 +360,7 @@ class Play {
     const p = this.p, m = this.map;
     if (this.banner) { this.banner.t -= dt; if (this.banner.t <= 0) this.banner = null; }
     this.controlPlayer(dt);
+    if (this.coach) Coach.run(this, dt);
     // flow field
     this.flowT -= dt; const pc = this.cell(p.x, p.y);
     if (this.flowT <= 0 || pc !== this.flowCell) { this.computeFlow(); this.flowT = 0.4; }
@@ -599,6 +602,7 @@ class Play {
       const tm = Math.round(this.time);
       if (!SAVE.best[this.li] || tm < SAVE.best[this.li]) SAVE.best[this.li] = tm;
       questEvent({ k: 'clear', L: this.L, hits: this.hits });
+      Coach.finish('clear'); Coach.finish('portal');
       sfx('coin-d', 0.9); sfx('jump-c', 0.6, 1.2);
       this.result = { won: true, first };
     } else this.result = { won: false };
@@ -648,7 +652,9 @@ class Play {
     else if (!this.tAim) this.tAim = id;
   }
   touchEnd(id) { if (this.tMove === id) this.tMove = null; if (this.tAim === id) this.tAim = null; }
-  resultDefault() { if (this.result.won && this.L < LEVEL_N) startLevel(this.li + 1); else this.toTown(); }
+  resultDefault() { if (this.result.won && this.L < LEVEL_N && !this.shopNext()) startLevel(this.li + 1); else this.toTown(); }
+  /* tutorial: a new player who just won with gold in the pouch goes to buy a first gun */
+  shopNext() { return !!(this.result && this.result.won && this.L < LEVEL_N && Coach.need('shop') && !SAVE.owned.some(Boolean) && SAVE.gold >= 1); }
   toTown() { Music.intensity = 0; cv.style.cursor = 'default'; persist(); setScene(new Home()); }
 
   /* ---------- drawing ---------- */
@@ -797,6 +803,7 @@ class Play {
       stextO(b.sub, HW / 2, by + bh + 9, 6, P.white, P.dark, 'center', 700, 2.2);
       ctx.globalAlpha = 1;
     }
+    if (this.coach && !this.paused && !this.result) Coach.drawRun(this, u, HW, HH);
     // touch hints / pause icon
     if (IN.touch) {
       ctx.globalAlpha = 0.6; btn('grey', HW - 22, HH - 24, 18, 18, false); stext('II', HW - 13, HH - 15.5, 6, P.dark, 'center', 700); ctx.globalAlpha = 1;
@@ -833,14 +840,15 @@ class Play {
   }
   drawPause() {
     cv.style.cursor = 'default'; dim(); menuXf();
-    const x = 150, y = 50, w = 160, h = 150;
+    const tut = this.coach && Coach.pending(), x = 150, y = tut ? 40 : 50, w = 160, h = tut ? 172 : 150;
     panel('grey', x, y, w, h);
     ptext('PAUSED', x + w / 2, y + 12, 'B', 'center');
     let any = false;
     any = this.overlayBtn('red', x + 30, y + 40, 100, 21, 'Resume', () => { this.paused = false; }) || any;
     any = this.overlayBtn('grey', x + 30, y + 66, 100, 21, 'Restart level', () => startLevel(this.li)) || any;
     any = this.overlayBtn('grey', x + 30, y + 92, 100, 21, 'Back to town', () => this.toTown()) || any;
-    stext('Gold you picked up is already saved.', x + w / 2, y + 128, 4.8, P.dark, 'center', 500);
+    if (tut) any = this.overlayBtn('grey', x + 30, y + 118, 100, 21, 'Skip tutorial', () => { Coach.skip(); this.coach = false; this.paused = false; }) || any;
+    stext('Gold you picked up is already saved.', x + w / 2, y + h - 22, 4.8, P.dark, 'center', 500);
     cv.style.cursor = any ? 'pointer' : 'default';
   }
   drawResult() {
@@ -853,12 +861,19 @@ class Play {
     rows.forEach((row, k) => { stext(row[0], x + 22, y + 34 + k * 11, 5.6, P.dark, 'left', 500); stext(String(row[1]), x + w - 22, y + 34 + k * 11, 5.6, P.dark, 'right', 700); });
     if (r.won && r.first && this.L < LEVEL_N) stext(`Level ${this.L + 1} unlocked!`, x + w / 2, y + 104, 6, P.redD, 'center', 700);
     if (r.won && r.first && this.L === 9) stext('Bonus: 1.5x weapon damage + auto Long Pistol', x + w / 2, y + 113, 5, P.redD, 'center', 700);
+    const shop = this.shopNext();
+    if (shop) stext('Next: buy your first gun in town', x + w / 2, y + 113, 5.6, P.redD, 'center', 700);
     if (r.won && this.L === LEVEL_N) stext('The Sand Tyrant is defeated. Dustwell is safe!', x + w / 2, y + 104, 5.6, P.redD, 'center', 700);
     if (!r.won) stext('Your gold is kept. Try again or gear up in town.', x + w / 2, y + 104, 5.4, P.redD, 'center', 600);
     let any = false;
-    if (r.won && this.L < LEVEL_N) any = this.overlayBtn('red', x + 16, y + h - 58, 90, 21, 'Next level', () => startLevel(this.li + 1)) || any;
-    else any = this.overlayBtn('red', x + 16, y + h - 58, 90, 21, r.won ? 'Play again' : 'Retry', () => startLevel(this.li)) || any;
-    any = this.overlayBtn('grey', x + w - 106, y + h - 58, 90, 21, 'Back to town', () => this.toTown()) || any;
+    if (shop) {
+      any = this.overlayBtn('red', x + 16, y + h - 58, 90, 21, 'Back to town', () => this.toTown()) || any;
+      any = this.overlayBtn('grey', x + w - 106, y + h - 58, 90, 21, 'Next level', () => startLevel(this.li + 1)) || any;
+    } else {
+      if (r.won && this.L < LEVEL_N) any = this.overlayBtn('red', x + 16, y + h - 58, 90, 21, 'Next level', () => startLevel(this.li + 1)) || any;
+      else any = this.overlayBtn('red', x + 16, y + h - 58, 90, 21, r.won ? 'Play again' : 'Retry', () => startLevel(this.li)) || any;
+      any = this.overlayBtn('grey', x + w - 106, y + h - 58, 90, 21, 'Back to town', () => this.toTown()) || any;
+    }
     any = this.overlayBtn('grey', x + w / 2 - 45, y + h - 32, 90, 21, 'Level select', () => { this.toTown(); openLevels(); }) || any;
     cv.style.cursor = any ? 'pointer' : 'default';
   }

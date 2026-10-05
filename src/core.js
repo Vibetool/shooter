@@ -333,6 +333,7 @@ function defaultSave() {
     npcs: { cat: { next: now, quest: null, count: 0 }, mouse: { next: now + STAGGER_MS, quest: null, count: 0 } }, lastJobAt: 0,
     upg: { regen: 0, fighter: 0, skill: 0, final: 0 },
     pvpName: '', pvpUid: '', pvp: { wins: 0, losses: 0 }, banned: 0, adminSeq: 0,
+    tut: { welcome: 0, move: 0, shoot: 0, fight: 0, coins: 0, dash: 0, chest: 0, clear: 0, portal: 0, shop: 0, job: 0, upgrade: 0, shortcut: 0, off: 0 },
     settings: { sfx: 0.8, music: 0.45, shake: 1, nums: 1 }
   };
 }
@@ -346,6 +347,8 @@ function normalizeSave(s) {
     else d[k] = s[k];
   }
   for (const n of ['cat', 'mouse']) { const o = d.npcs[n]; if (typeof o !== 'object' || !o) d.npcs[n] = defaultSave().npcs[n]; }
+  // saves from before the tutorial existed: players who already played skip the lessons (they still get the shortcut tip)
+  if (!s.tut && (d.stats.runs > 0 || d.cleared.some(Boolean))) { for (const k in d.tut) d.tut[k] = 1; d.tut.shortcut = 0; }
   return d;
 }
 function loadLocal() { try { const t = localStorage.getItem(SAVE_KEY); return t ? JSON.parse(t) : null; } catch (e) { return null; } }

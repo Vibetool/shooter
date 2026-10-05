@@ -5,7 +5,7 @@ const TOASTS = [];
 Game.toast = msg => { TOASTS.push({ msg, t: 3.2 }); if (TOASTS.length > 3) TOASTS.shift(); };
 function drawToasts(dt) {
   menuXf();
-  let y = 6;
+  let y = Coach.topCard || 6; Coach.topCard = 0;
   for (let i = 0; i < TOASTS.length; i++) {
     const t = TOASTS[i]; t.t -= dt;
     const a = clamp(t.t / 0.4, 0, 1);
@@ -70,6 +70,223 @@ function textButton(sc, kind, x, y, w, h, label, fn, tip) {
   stext(label, x + w / 2, y + h / 2 - 0.5 + (on ? -1 : 0), BTN_FONT, kind === 'red' ? P.white : P.dark, 'center', 600);
   return on;
 }
+
+/* ---------------- desktop shortcut: an icon that opens this page in the default browser ----------------
+   A web page cannot put files on the desktop itself, so the player drags the game's link onto the
+   desktop (the system turns it into a shortcut) or downloads a small shortcut file. Phones use
+   Add to Home Screen. The game stays an ordinary web page. */
+const Shortcut = {
+  icon: '',
+  site() { return !PVP.blocked(); }, // the website; the claude.ai preview runs inside Claude
+  phone() { try { return matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches; } catch (e) { return IN.touch; } },
+  ios() { const ua = navigator.userAgent; return /iphone|ipad|ipod/i.test(ua) || (/macintosh/i.test(ua) && navigator.maxTouchPoints > 1); },
+  mac() { return /macintosh|mac os x/i.test(navigator.userAgent) && !this.ios(); },
+  /* the hero, drawn big and crisp on sand, for the icon the player drags */
+  iconURL() {
+    if (this.icon) return this.icon;
+    const c = document.createElement('canvas'); c.width = c.height = 72;
+    const g = c.getContext('2d'); g.imageSmoothingEnabled = false;
+    g.drawImage(SHEET.enemies.img, 0, 72, 24, 24, 0, 0, 72, 72); // enemies tile 12: the blue monster
+    return (this.icon = c.toDataURL());
+  },
+  download() {
+    const u = PVP_SITE, mac = this.mac();
+    const text = mac
+      ? '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n' +
+        `<plist version="1.0">\n<dict>\n\t<key>URL</key>\n\t<string>${u}</string>\n</dict>\n</plist>\n`
+      : `[InternetShortcut]\r\nURL=${u}\r\nIconFile=${u}icons/shortcut.ico\r\nIconIndex=0\r\n`;
+    try {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([text], { type: 'application/octet-stream' }));
+      a.download = 'Dustwell Shooter' + (mac ? '.webloc' : '.url');
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      Game.toast('Saved to Downloads: move it to your desktop, then double-click it to play');
+    } catch (e) { Game.toast('The download was blocked. Drag the icon onto your desktop instead.'); }
+  }
+};
+class ShortcutDialog extends MenuScene {
+  constructor() {
+    super();
+    if (Shortcut.phone() || !Shortcut.site()) return; // phones get Add to Home Screen steps; the claude.ai preview points to the website
+    // a real link to the game, so dragging it out of the page makes a shortcut on the desktop
+    const a = this.el = document.createElement('a');
+    a.id = 'shortcut-link'; a.href = PVP_SITE; a.textContent = 'Dustwell Shooter';
+    a.setAttribute('aria-label', 'Dustwell Shooter. Drag this link onto your desktop to make a shortcut.');
+    Object.assign(a.style, { position: 'fixed', zIndex: 5, boxSizing: 'border-box', display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+      textAlign: 'center', textDecoration: 'none', color: '#47324b', fontFamily: FONT, fontWeight: '700', lineHeight: '1.1', cursor: 'grab',
+      background: `url(${Shortcut.iconURL()}) center 18% / 58% no-repeat`, imageRendering: 'pixelated', border: '2px dashed #47324b', borderRadius: '6px' });
+    a.addEventListener('click', e => { e.preventDefault(); Game.toast('Hold the icon and drag it onto your desktop'); });
+    document.body.appendChild(a);
+  }
+  close() { if (this.el) this.el.remove(); popScene(this); }
+  key(k) { if (k === 'escape' || k === 'enter') this.close(); }
+  outside() { this.close(); }
+  draw() {
+    dim(); this.begin();
+    const x = 85, w = 290, h = this.el ? 178 : 104, y = Math.round(129 - h / 2); // phones: a smaller card, just the steps
+    this.hit(x, y, w, h, () => {});
+    panel('grey', x, y, w, h);
+    ptext('SHORTCUT', x + w / 2, y + 10, 'B', 'center');
+    const say = (lines, tx, ty, align = 'left') => lines.forEach(([l, bold], k) => stext(l, tx, ty + k * 9, 5.4, bold ? P.redD : P.dark, align, bold ? 700 : 500));
+    if (!Shortcut.site()) {
+      say([['Shortcuts are made on the game website:', true], [PVP_SITE.replace('https://', ''), true],
+        ['Open it there, then Options > Desktop shortcut.']], x + w / 2, y + 38, 'center');
+    } else if (!this.el) {
+      say([['Put Dustwell Shooter on your home screen:', true],
+        [Shortcut.ios() ? 'In Safari, tap Share, then Add to Home Screen.' : 'Open the browser menu, then Add to Home screen.'],
+        ['The icon opens the game in your browser.']], x + w / 2, y + 38, 'center');
+    } else {
+      // keep the draggable link glued to its box at any window size
+      const bx = x + 16, by = y + 36, bw = 72, bh = 82, st = this.el.style;
+      st.left = (M.ox + bx * M.s) / DPR + 'px'; st.top = (M.oy + by * M.s) / DPR + 'px';
+      st.width = bw * M.s / DPR + 'px'; st.height = bh * M.s / DPR + 'px';
+      st.fontSize = Math.max(10, 6.2 * M.s / DPR) + 'px'; st.padding = `0 0 ${4 * M.s / DPR}px`;
+      say([['Drag this icon onto your desktop.', true], ['Double-click it any time and the game', false], ['opens in your default browser.', false]], x + 98, y + 44);
+      say([['Browser covering the desktop?', true], ['Make the window smaller, or download', false], ['the shortcut and move it to the desktop.', false]], x + 98, y + 80);
+      textButton(this, 'grey', x + 98, y + 108, 96, 19, 'Download shortcut', () => Shortcut.download());
+    }
+    textButton(this, 'red', x + w / 2 - 32, y + h - 28, 64, 21, 'OK', () => this.close());
+    this.end();
+  }
+}
+// if anything else closes the dialog, take the link off the page too
+setInterval(() => { const el = document.getElementById('shortcut-link'); if (el && !SCENES.some(sc => sc instanceof ShortcutDialog)) el.remove(); }, 250);
+
+/* ---------------- new-player tutorial ----------------
+   Mira coaches a new player with one short hint at a time; each hint goes away once the player has
+   done the thing (hints that only explain go after a few seconds). Runs teach moving, the knife,
+   gold, dashing and the portal; town teaches the shop, jobs and upgrades. Skip turns it off,
+   Options > Tutorial starts it again. */
+const RUN_TIPS = ['move', 'shoot', 'fight', 'coins', 'dash', 'clear', 'portal'];
+const TIP_TEXT = {
+  welcome: () => ['Welcome to Dustwell!', 'You are the blue monster. Press Start run, then pick Level 1.'],
+  levels: () => ['Pick a level', 'Click Level 1 to start your first run.'],
+  move: () => ['Move', IN.touch ? 'Drag on the left half of the screen to walk.' : 'Walk with WASD or the arrow keys.'],
+  shoot: () => ['Shoot', IN.touch ? 'Touch and hold the right half of the screen to aim and fire.' : 'Aim with the mouse and hold the left button to fire. R reloads.'],
+  fight: () => ['Fight', IN.touch ? 'Walk up to a monster: your knife strikes by itself.' : 'Walk up to a monster: your knife strikes by itself, or click to swing.', 'Red dots on the round map are monsters.'],
+  coins: () => ['Gold', 'Coins fly to you. Spend them on guns in town.'],
+  dash: () => ['Dash', 'Press Space to dash out of trouble.'],
+  chest: () => ['Chest', 'Walk into a chest for bonus gold.'],
+  clear: () => ['Clear the level', 'Defeat every monster. The count is at the top.'],
+  portal: () => ['Level clear!', 'Walk into the portal where you started.'],
+  shop: () => ['Buy your first gun', 'Click the Pistol in the blue shop. It costs 1 gold.'],
+  job: n => ['A job for you', `${NPCS[n].name} has work that pays extra gold. Click ${NPCS[n].name}.`],
+  upgrade: () => ['Upgrades', 'Regen, a Fighter and a Skill make runs easier. Click Upgrade.'],
+  shortcut: () => ['Desktop shortcut', 'Make an icon that opens this game in your browser.']
+};
+const Coach = {
+  topCard: 0,
+  need(id) { return !SAVE.tut.off && !SAVE.tut[id]; },
+  finish(id) { if (!SAVE.tut[id]) { SAVE.tut[id] = 1; persist(); } },
+  /* lessons still to come (the shortcut tip is not a lesson) */
+  pending() { return !SAVE.tut.off && Object.keys(SAVE.tut).some(k => k !== 'off' && k !== 'shortcut' && !SAVE.tut[k]); },
+  skip() { SAVE.tut.off = 1; persist(); Game.toast('Tutorial off. Options > Tutorial turns it back on.'); },
+  replay() { for (const k in SAVE.tut) SAVE.tut[k] = 0; persist(); },
+  /* Mira's hint card: portrait, bold title, the hint, optional buttons on the right. Returns its height. */
+  card(sc, x, y, w, tip, buttons = [], fromBottom = false) {
+    const [title, ...body] = tip, bw = buttons.reduce((s, b) => s + b.w + 4, 0);
+    const lines = body.flatMap(b => wrapText(b, w - 40 - bw, 5, 500)), h = Math.max(26, Math.round(19 + lines.length * 6.5));
+    if (fromBottom) y -= h;
+    smallPanel(x, y, w, h);
+    spr('players', NPCS.cat.f, x + 3, y + Math.round((h - 24) / 2));
+    stext(title, x + 31, y + 8.5, 6, P.dark, 'left', 700);
+    lines.forEach((l, k) => stext(l, x + 31, y + 16.5 + k * 6.5, 5, P.dark, 'left', 500));
+    let bx = x + w - 6;
+    for (const b of buttons) { bx -= b.w; textButton(sc, b.kind || 'grey', bx, y + Math.round((h - 15) / 2), b.w, 15, b.label, b.fn); bx -= 4; }
+    return h;
+  },
+  /* a blinking frame around something to click, and a bouncing arrow (dir: the way it points, 0 = right) */
+  frame(x, y, w, h, t) {
+    if (Math.sin(t * 7) < -0.55) return;
+    const ring = (d, th, c) => { ctx.fillStyle = c; ctx.fillRect(x - d, y - d, w + 2 * d, th); ctx.fillRect(x - d, y + h + d - th, w + 2 * d, th); ctx.fillRect(x - d, y - d, th, h + 2 * d); ctx.fillRect(x + w + d - th, y - d, th, h + 2 * d); };
+    ring(4, 1, P.dark); ring(3, 2, P.white);
+  },
+  arrow(cx, cy, dir, t) {
+    const bob = Math.round(Math.sin(t * 6) * 2);
+    spr('ui', 78, Math.round(cx - 8 - Math.cos(dir) * bob), Math.round(cy - 8 - Math.sin(dir) * bob), { rot: dir + Math.PI / 2 });
+  },
+  /* ---- town ---- */
+  homeTip() {
+    const T = SAVE.tut;
+    if (!T.off) {
+      if (!T.welcome) return { id: 'welcome' };
+      if (!T.shop) { if (SAVE.owned.some(Boolean)) this.finish('shop'); else if (SAVE.gold >= 1) return { id: 'shop' }; }
+      if (T.shop) {
+        const npc = ['cat', 'mouse'].find(n => SAVE.npcs[n].quest && SAVE.npcs[n].quest.status === 'offered');
+        if (!T.job && npc) return { id: 'job', npc };
+        if (!T.upgrade && SAVE.gold >= UPG_PRICES[0]) return { id: 'upgrade' };
+      }
+    }
+    if (!T.shortcut && T.welcome && SAVE.stats.runs >= 2 && Shortcut.site()) return { id: 'shortcut' };
+    return null;
+  },
+  drawHome(sc) {
+    const tip = topScene() === sc ? this.homeTip() : null; if (!tip) return;
+    const t = sc.t, y = 3;
+    const btns = tip.id === 'shortcut'
+      ? [{ label: 'Make one', kind: 'red', w: 46, fn: () => { this.finish('shortcut'); pushScene(new ShortcutDialog()); } }, { label: 'Later', w: 34, fn: () => this.finish('shortcut') }]
+      : [{ label: 'Skip', w: 30, fn: () => this.skip() }];
+    this.topCard = y + this.card(sc, 105, y, 250, TIP_TEXT[tip.id](tip.npc), btns) + 5;
+    if (tip.id === 'welcome') this.frame(318, 136, 66, 21, t); // the sample's own arrow already points at Start run
+    if (tip.id === 'shop') { SAVE.page = 0; this.frame(302, 72, 22, 19, t); this.arrow(313, 52, Math.PI / 2, t); }
+    if (tip.id === 'job' && tip.npc === 'cat') { this.frame(129, 64, 24, 41, t); this.arrow(116, 88, 0, t); }
+    if (tip.id === 'job' && tip.npc === 'mouse') { this.frame(160, 59, 24, 41, t); this.arrow(172, 113, -Math.PI / 2, t); }
+    if (tip.id === 'upgrade') { this.frame(62, 34, 77, 24, t); this.arrow(100, 70, -Math.PI / 2, t); }
+  },
+  drawLevels(sc) {
+    if (topScene() !== sc || !this.need('welcome') || sc.page !== 0) return;
+    this.frame(18, 46, 80, 46, sc.t); this.arrow(58, 104, -Math.PI / 2, sc.t);
+    this.card(sc, 105, 252, 250, TIP_TEXT.levels(), [{ label: 'Skip', w: 30, fn: () => this.skip() }], true);
+  },
+  /* ---- runs ---- */
+  runTip(g) {
+    const T = SAVE.tut, p = g.p;
+    if (T.off) return null;
+    if (!T.chest && T.fight && g.state === 'play' && (g.coachStep === 'chest' || g.chests.some(c => !c.open && Math.hypot(c.x - p.x, c.y - p.y) < 110))) return 'chest';
+    for (const id of RUN_TIPS) {
+      if (T[id]) continue;
+      if (id === 'shoot' && p.wi < 0) continue; // only once there is a gun in hand
+      if (id === 'dash' && IN.touch) continue;  // no dash on touch screens
+      if (id === 'portal' && g.state !== 'clear') return null;
+      return id;
+    }
+    return null;
+  },
+  run(g, dt) {
+    const p = g.p;
+    g.coachMoved += Math.hypot(p.vx, p.vy) * dt;
+    const id = this.runTip(g);
+    if (id !== g.coachStep) { g.coachStep = id; g.coachT = 0; } else g.coachT += dt;
+    const t = g.coachT, done = {
+      move: g.coachMoved > 60 && t > 2.5, shoot: (g.coachShots >= 6 && t > 3) || t > 10, fight: g.killsRun > 0,
+      coins: (g.goldRun >= 3 && t > 3) || t > 6, dash: p.dashT > 0 || t > 8, chest: g.chestsRun > 0 || t > 7,
+      clear: g.state === 'clear' || t > 10
+    }[id];
+    if (done) this.finish(id);
+  },
+  runTarget(g, id) {
+    const p = g.p, near = list => { let best = null, bd = Infinity; for (const o of list) { const d = Math.hypot(o.x - p.x, o.y - p.y); if (d < bd) { bd = d; best = o; } } return best; };
+    if (id === 'fight') { const e = near(g.ents.filter(e => !e.dead)); return e && { x: e.x, y: e.y - 8 * e.scale }; }
+    if (id === 'chest') { const c = near(g.chests.filter(c => !c.open)); return c && { x: c.x, y: c.y - 8 }; }
+    if (id === 'portal' && g.portal) return { x: g.portal.x, y: g.portal.y - 4 };
+    return null;
+  },
+  drawRun(g, u, HW, HH) {
+    const id = g.coachStep; if (!id || g.p.dead) return;
+    const tgt = this.runTarget(g, id), t = g.t;
+    if (tgt) {
+      const k = g.view().Z / u, sx = (tgt.x - g.cam.x) * k, sy = (tgt.y - g.cam.y) * k, m = 20;
+      if (sx > m && sy > m + 30 && sx < HW - m && sy < HH - 60) this.arrow(sx, sy - 16, Math.PI / 2, t); // on screen: bob above it
+      else { // off screen: an arrow on the edge, pointing the way
+        const a = Math.atan2(sy - HH / 2, sx - HW / 2), c = Math.cos(a), s = Math.sin(a);
+        const r = Math.min(Math.abs(c) > 1e-3 ? (HW / 2 - m) / Math.abs(c) : 1e9, Math.abs(s) > 1e-3 ? (HH / 2 - m - 30) / Math.abs(s) : 1e9);
+        this.arrow(HW / 2 + c * r, HH / 2 + s * r, a, t);
+      }
+    }
+    this.card(null, HW / 2 - 125, HH - 8, 250, TIP_TEXT[id](), [], true);
+  }
+};
 
 /* ---------------- HOME (replicates the Kenney sample layout) ---------------- */
 const SLOTS = [[301, 69], [326, 69], [301, 89], [326, 89]];
@@ -179,6 +396,7 @@ class Home extends MenuScene {
     const ty = [138, 161, 184][hov < 0 ? 0 : hov];
     this.arrowY = lerp(this.arrowY, ty, 0.35);
     spr('ui', 78, 381 + Math.round(Math.sin(t * 6) * 1.2), Math.round(this.arrowY), { rot: -Math.PI / 2 });
+    Coach.drawHome(this);
     this.end();
   }
   drawArmory() {
@@ -269,6 +487,7 @@ function finalUpgradeClick() {
 }
 /* ---------------- UPGRADE menu (red banner panel, three tracks + the final upgrade) ---------------- */
 class UpgradeMenu extends MenuScene {
+  constructor() { super(); Coach.finish('upgrade'); }
   key(k) { if (k === 'escape') popScene(this); }
   outside() { popScene(this); }
   draw() {
@@ -376,6 +595,7 @@ class Levels extends MenuScene {
       if (BOSSES[L]) spr('ui', 55, x + w - 13, yy - 5);
       if (on && open) spr('ui', 104, x + w - 18, yy + h - 18);
     }
+    Coach.drawLevels(this);
     if (pages > 1) {
       if (this.page > 0) { const l = this.hit(2, 118, 14, 20, () => this.turn(-1), ['Previous levels']); spr('ui', 78, 1 - (l ? 1 : 0), 120, { rot: -Math.PI / 2 }); }
       if (this.page < pages - 1) { const r = this.hit(444, 118, 14, 20, () => this.turn(1), ['More levels']); spr('ui', 78, 443 + (r ? 1 : 0), 120, { rot: Math.PI / 2 }); }
@@ -391,12 +611,12 @@ class Options extends MenuScene {
   update(dt) { super.update(dt); this.confirmT = Math.max(0, this.confirmT - dt); }
   draw() {
     dim(); this.begin();
-    const x = 96, y = 18, w = 268, h = 222;
+    const x = 96, y = 6, w = 268, h = 246;
     this.hit(x, y, w, h, () => {});
     panel('grey', x, y, w, h);
     ptext('OPTIONS', x + w / 2, y + 10, 'B', 'center');
     const S = SAVE.settings;
-    const row = (i, label) => { const yy = y + 36 + i * 22; stext(label, x + 16, yy + 7, 6, P.dark, 'left', 600); return yy; };
+    const row = (i, label) => { const yy = y + 34 + i * 20; stext(label, x + 16, yy + 7, 6, P.dark, 'left', 600); return yy; };
     const vol = (i, label, key) => {
       const yy = row(i, label);
       const minus = this.hit(x + 120, yy, 14, 14, () => { S[key] = Math.max(0, Math.round((S[key] - 0.1) * 10) / 10); applyVolumes(); persist(); sfx('coin-a'); });
@@ -414,15 +634,17 @@ class Options extends MenuScene {
     tog(4, 'Fullscreen', !!document.fullscreenElement, () => {
       try { if (document.fullscreenElement) document.exitFullscreen(); else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => Game.toast('Fullscreen is not available here')); else Game.toast('Fullscreen is not available here'); } catch (e) { Game.toast('Fullscreen is not available here'); }
     });
-    const yy = row(5, 'Reset progress');
+    textButton(this, 'grey', x + 120, row(5, 'Tutorial') - 3, 50, 19, 'Replay', () => { Coach.replay(); Game.toast('Tutorial on: Mira will show you around again'); });
+    textButton(this, 'grey', x + 120, row(6, Shortcut.phone() ? 'Home screen icon' : 'Desktop shortcut') - 3, 50, 19, 'Make', () => pushScene(new ShortcutDialog()));
+    const yy = row(7, 'Reset progress');
     textButton(this, this.confirmT > 0 ? 'red' : 'grey', x + 120, yy - 3, 70, 19, this.confirmT > 0 ? 'Confirm wipe' : 'Reset', () => {
       if (this.confirmT > 0) { const keep = { settings: SAVE.settings, pvpUid: SAVE.pvpUid, pvpName: SAVE.pvpName, pvp: SAVE.pvp, adminSeq: SAVE.adminSeq }; SAVE = Object.assign(defaultSave(), keep); persist(); this.confirmT = 0; Game.toast('Progress reset. Welcome back to Dustwell.'); }
       else this.confirmT = 3;
     });
     if (this.confirmT > 0) stext('Click again to erase gold, weapons and levels', x + 196, yy + 7, 4.4, P.redD, 'left', 600);
     const help = ['WASD or arrows move. Mouse aims, hold left click to shoot.', 'Your knife strikes by itself every 2 seconds when a monster is close.', 'Space dashes, R reloads, Esc pauses.'];
-    help.forEach((l, k) => stext(l, x + w / 2, y + 168 + k * 8, 5, P.dark, 'center', 500));
-    textButton(this, 'red', x + w / 2 - 32, y + h - 31, 64, 21, 'Done', () => popScene(this));
+    help.forEach((l, k) => stext(l, x + w / 2, y + 196 + k * 8, 5, P.dark, 'center', 500));
+    textButton(this, 'red', x + w / 2 - 32, y + h - 26, 64, 21, 'Done', () => popScene(this));
     this.end();
   }
 }
@@ -489,7 +711,7 @@ class Credits extends MenuScene {
 
 /* ---------------- NPC job dialog ---------------- */
 class NpcDialog extends MenuScene {
-  constructor(id) { super(); this.id = id; }
+  constructor(id) { super(); this.id = id; Coach.finish('job'); }
   key(k) { if (k === 'escape') popScene(this); }
   outside() { popScene(this); }
   draw() {
