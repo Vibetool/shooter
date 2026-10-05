@@ -322,6 +322,7 @@ class Levels extends MenuScene {
     panel('red', 150, 6, 160, 30);
     ptext('SELECT LEVEL', 230, 15, 'B', 'center');
     textButton(this, 'grey', 10, 10, 50, 21, 'Back', () => popScene(this));
+    textButton(this, 'grey', 70, 10, 50, 21, 'PVP', () => pushScene(new PvpLobby()));
     spr('tiles', 225, 400, 12); ptext(String(SAVE.gold), 415, 13, 'A');
     const unl = highestUnlocked(), shown = Math.min(LEVEL_N, unl + 3), pages = this.pages();
     this.page = clamp(this.page, 0, pages - 1);

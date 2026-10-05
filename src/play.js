@@ -6,7 +6,7 @@ const TAU = Math.PI * 2;
 const angDiff = (a, b) => { let d = (a - b) % TAU; if (d > Math.PI) d -= TAU; if (d < -Math.PI) d += TAU; return d; };
 
 class Play {
-  constructor(li) {
+  constructor(li, opts = {}) {
     this.li = li; this.L = li + 1; this.def = LEVELS[li];
     const m = this.map = renderMap(getMap(li));
     this.t = 0; this.state = 'play'; this.time = 0;
@@ -29,6 +29,7 @@ class Play {
     this.banner = { lines: ['LEVEL ' + this.L], sub: this.def.name, t: 2.2, kind: 'red' };
     this.paused = false; this.result = null; this.hot = []; this.saveT = 0;
     this.tMove = null; this.tAim = null;
+    if (opts.pvp) { this.chests = []; this.meds = []; this.banner = null; this.upg = { regen: 0, fighter: 0, skill: 0, final: 0 }; this.snapCam(); return; }
     SAVE.stats.runs++; persist();
     Game.toast('Shield ready: it blocks 1 damage and recharges');
     Music.intensity = 1;
@@ -150,12 +151,13 @@ class Play {
     if (p.ammo <= 0) { this.startReload(); return; }
     const w = WEAPONS[p.wi];
     p.cd = 1 / w.rate; p.ammo--;
-    const ox = p.x + Math.cos(p.aim) * 12, oy = p.y - 6 + Math.sin(p.aim) * 12;
+    const ox = p.x + Math.cos(p.aim) * 12, oy = p.y - 6 + Math.sin(p.aim) * 12, first = this.bullets.length;
     for (let k = 0; k < w.pellets; k++) {
       const a = p.aim + (R() - 0.5) * (w.spread * Math.PI / 180);
       const sp = w.speed * (w.pellets > 1 ? 0.85 + R() * 0.3 : 1);
       this.bullets.push({ x: ox, y: oy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: w.life * (w.pellets > 1 ? 0.8 + R() * 0.4 : 1), dmg: w.dmg * dmgMul(), kind: w.kind, pierce: w.pierce || 0, splash: w.splash || 0, hit: [], wi: p.wi });
     }
+    if (this.onShots) this.onShots(this.bullets.slice(first));
     this.parts.push({ x: ox, y: oy, vx: 0, vy: 0, t: 0.05, max: 0.05, size: 3, col: P.yelL });
     sfx(w.sfx, 0.5, 0.95 + R() * 0.1, 0.02);
     if (SAVE.settings.shake) this.shake = Math.max(this.shake, w.pellets > 1 || w.dmg > 10 ? 3 : 1);
@@ -166,6 +168,7 @@ class Play {
     const p = this.p; if (p.knifeCd > 0 || p.dead) return;
     const a = ang == null ? p.aim : ang;
     p.knifeCd = 1 / KNIFE.rate; p.knifeT = 0.2; p.knifeA = a;
+    if (this.onKnife) this.onKnife(a);
     sfx('jump-f', 0.6, 1.2);
     for (const e of this.ents) {
       if (e.dead) continue;
@@ -354,33 +357,7 @@ class Play {
     if (this.state === 'play') { this.time += dt; SAVE.stats.playTime += dt; }
     const p = this.p, m = this.map;
     if (this.banner) { this.banner.t -= dt; if (this.banner.t <= 0) this.banner = null; }
-    // input
-    let ix = 0, iy = 0;
-    if (!p.dead) {
-      if (IN.keys.a || IN.keys.arrowleft) ix -= 1; if (IN.keys.d || IN.keys.arrowright) ix += 1;
-      if (IN.keys.w || IN.keys.arrowup) iy -= 1; if (IN.keys.s || IN.keys.arrowdown) iy += 1;
-      if (this.tMove) { const o = IN.touches[this.tMove]; if (o) { const dx = o.x - o.sx, dy = o.y - o.sy, d = Math.hypot(dx, dy), R0 = 40 * DPR; if (d > 6 * DPR) { ix = dx / Math.max(d, R0); iy = dy / Math.max(d, R0); } } }
-      const il = Math.hypot(ix, iy); if (il > 1) { ix /= il; iy /= il; }
-      // aim
-      if (this.tAim && IN.touches[this.tAim]) { const o = IN.touches[this.tAim]; const [wx, wy] = this.toWorld(o.x, o.y); p.aim = Math.atan2(wy - (p.y - 6), wx - p.x); }
-      else if (IN.touch) { const tgt = this.nearestEnemy(170); if (tgt) p.aim = Math.atan2(tgt.y - 6 * tgt.scale - (p.y - 6), tgt.x - p.x); else if (ix || iy) p.aim = Math.atan2(iy, ix); }
-      else { const [wx, wy] = this.toWorld(IN.mx, IN.my); p.aim = Math.atan2(wy - (p.y - 6), wx - p.x); }
-      const firing = (IN.down && !IN.touch) || (this.tAim && IN.touches[this.tAim]);
-      if (firing && this.state !== 'dead') this.fire();
-      this.autoKnife();
-      if (hasAutoGun() && this.state === 'play') this.autoShot(dt);
-      if (this.state === 'play') this.upgradesTick(dt);
-    }
-    // timers
-    p.cd = Math.max(0, p.cd - dt); p.knifeCd = Math.max(0, p.knifeCd - dt); p.autoKnifeCd = Math.max(0, p.autoKnifeCd - dt); p.knifeT = Math.max(0, p.knifeT - dt);
-    p.inv = Math.max(0, p.inv - dt); p.dashCd = Math.max(0, p.dashCd - dt);
-    if (p.reload > 0) { p.reload -= dt; if (p.reload <= 0) { p.reload = 0; p.ammo = WEAPONS[p.wi].mag; sfx('move-c' in AUD.buf ? 'move-c' : 'select-a', 0.5); } }
-    // movement
-    const speed = 84;
-    if (p.dashT > 0) { p.dashT -= dt; p.vx = p.dashX * 230; p.vy = p.dashY * 230; if (R() < 0.6) this.puff(p.x, p.y + 2, 1, P.dust, 10); }
-    else { const k = 1 - Math.exp(-dt * 16); p.vx = lerp(p.vx, ix * speed, k); p.vy = lerp(p.vy, iy * speed, k); }
-    if (!p.dead) this.move(p, p.vx * dt, p.vy * dt, 4);
-    p.moving = Math.hypot(p.vx, p.vy) > 12; if (p.moving) { p.walk += dt; if (Math.floor(p.walk * 6) !== Math.floor((p.walk - dt) * 6) && Math.floor(p.walk * 6) % 2 === 0) this.puff(p.x, p.y + 3, 1, P.dust, 8); }
+    this.controlPlayer(dt);
     // flow field
     this.flowT -= dt; const pc = this.cell(p.x, p.y);
     if (this.flowT <= 0 || pc !== this.flowCell) { this.computeFlow(); this.flowT = 0.4; }
@@ -455,19 +432,53 @@ class Play {
     // portal
     if (this.portal && !p.dead && Math.hypot(p.x - this.portal.x, p.y - this.portal.y) < 10) this.finish(true);
     if (this.state === 'dead') { this.deadT -= dt; if (this.deadT <= 0 && !this.result) this.finish(false); }
-    // particles
+    this.updateFx(dt); this.updateCamera(dt);
+    this.saveT += dt; if (this.saveT > 10) { this.saveT = 0; persist(); }
+  }
+  updateFx(dt) {
     for (const q of this.parts) { q.t -= dt; q.x += q.vx * dt; q.y += q.vy * dt; q.vx *= Math.pow(0.05, dt); q.vy *= Math.pow(0.05, dt); }
     this.parts = this.parts.filter(q => q.t > 0);
     for (const n of this.nums) { n.t -= dt; n.y -= 18 * dt; }
     this.nums = this.nums.filter(n => n.t > 0);
-    // camera
-    const v = this.view();
+  }
+  updateCamera(dt) {
+    const p = this.p, v = this.view();
     let lx = 0, ly = 0;
     if (!IN.touch) { const [wx, wy] = this.toWorld(IN.mx, IN.my); lx = clamp((wx - p.x) * 0.18, -40, 40); ly = clamp((wy - p.y) * 0.18, -30, 30); }
     const tx = p.x + lx - v.w / 2, ty = p.y + ly - v.h / 2, k = 1 - Math.exp(-dt * 8);
     this.cam.x = lerp(this.cam.x, tx, k); this.cam.y = lerp(this.cam.y, ty, k); this.clampCam();
     this.shake = Math.max(0, this.shake - dt * 30);
-    this.saveT += dt; if (this.saveT > 10) { this.saveT = 0; persist(); }
+  }
+  /* input, weapon timers and movement for the hero (shared by monster runs and duels) */
+  controlPlayer(dt) {
+    const p = this.p;
+    // input
+    let ix = 0, iy = 0;
+    if (!p.dead && !this.noInput) {
+      if (IN.keys.a || IN.keys.arrowleft) ix -= 1; if (IN.keys.d || IN.keys.arrowright) ix += 1;
+      if (IN.keys.w || IN.keys.arrowup) iy -= 1; if (IN.keys.s || IN.keys.arrowdown) iy += 1;
+      if (this.tMove) { const o = IN.touches[this.tMove]; if (o) { const dx = o.x - o.sx, dy = o.y - o.sy, d = Math.hypot(dx, dy), R0 = 40 * DPR; if (d > 6 * DPR) { ix = dx / Math.max(d, R0); iy = dy / Math.max(d, R0); } } }
+      const il = Math.hypot(ix, iy); if (il > 1) { ix /= il; iy /= il; }
+      // aim
+      if (this.tAim && IN.touches[this.tAim]) { const o = IN.touches[this.tAim]; const [wx, wy] = this.toWorld(o.x, o.y); p.aim = Math.atan2(wy - (p.y - 6), wx - p.x); }
+      else if (IN.touch) { const tgt = this.nearestEnemy(170); if (tgt) p.aim = Math.atan2(tgt.y - 6 * tgt.scale - (p.y - 6), tgt.x - p.x); else if (ix || iy) p.aim = Math.atan2(iy, ix); }
+      else { const [wx, wy] = this.toWorld(IN.mx, IN.my); p.aim = Math.atan2(wy - (p.y - 6), wx - p.x); }
+      const firing = (IN.down && !IN.touch) || (this.tAim && IN.touches[this.tAim]);
+      if (firing && this.state !== 'dead') this.fire();
+      this.autoKnife();
+      if (hasAutoGun() && this.state === 'play') this.autoShot(dt);
+      if (this.state === 'play') this.upgradesTick(dt);
+    }
+    // timers
+    p.cd = Math.max(0, p.cd - dt); p.knifeCd = Math.max(0, p.knifeCd - dt); p.autoKnifeCd = Math.max(0, p.autoKnifeCd - dt); p.knifeT = Math.max(0, p.knifeT - dt);
+    p.inv = Math.max(0, p.inv - dt); p.dashCd = Math.max(0, p.dashCd - dt);
+    if (p.reload > 0) { p.reload -= dt; if (p.reload <= 0) { p.reload = 0; p.ammo = WEAPONS[p.wi].mag; sfx('move-c' in AUD.buf ? 'move-c' : 'select-a', 0.5); } }
+    // movement
+    const speed = 84;
+    if (p.dashT > 0) { p.dashT -= dt; p.vx = p.dashX * 230; p.vy = p.dashY * 230; if (R() < 0.6) this.puff(p.x, p.y + 2, 1, P.dust, 10); }
+    else { const k = 1 - Math.exp(-dt * 16); p.vx = lerp(p.vx, ix * speed, k); p.vy = lerp(p.vy, iy * speed, k); }
+    if (!p.dead) this.move(p, p.vx * dt, p.vy * dt, 4);
+    p.moving = Math.hypot(p.vx, p.vy) > 12; if (p.moving) { p.walk += dt; if (Math.floor(p.walk * 6) !== Math.floor((p.walk - dt) * 6) && Math.floor(p.walk * 6) % 2 === 0) this.puff(p.x, p.y + 3, 1, P.dust, 8); }
   }
   /* a player shot knocks a yellow imp's fireball out of the air */
   blockFire(b, nx, ny) {
@@ -601,14 +612,16 @@ class Play {
     if (this.paused || this.result) { if (k === 'enter' && this.result) this.resultDefault(); return; }
     const p = this.p;
     if (k === 'r') this.startReload();
-    if ((k === ' ' || k === 'shift') && p.dashCd <= 0 && !p.dead) {
-      let dx = p.vx, dy = p.vy, l = Math.hypot(dx, dy);
-      if (l < 10) { dx = Math.cos(p.aim); dy = Math.sin(p.aim); l = 1; }
-      p.dashX = dx / l; p.dashY = dy / l; p.dashT = 0.17; p.dashCd = 0.9; p.inv = Math.max(p.inv, 0.25); sfx('jump-a', 0.5);
-    }
+    if (k === ' ' || k === 'shift') this.dash();
     if (k === 'q' || k === 'tab') this.cycleWeapon(1);
     if (k >= '1' && k <= '8') { const wi = +k - 1, g = wi + ORANGE_N; if (SAVE.owned[g]) this.equip(g); else if (SAVE.owned[wi]) this.equip(wi); }
     if (k === '0') this.equip(-1);
+  }
+  dash() {
+    const p = this.p; if (p.dashCd > 0 || p.dead || this.noInput) return;
+    let dx = p.vx, dy = p.vy, l = Math.hypot(dx, dy);
+    if (l < 10) { dx = Math.cos(p.aim); dy = Math.sin(p.aim); l = 1; }
+    p.dashX = dx / l; p.dashY = dy / l; p.dashT = 0.17; p.dashCd = 0.9; p.inv = Math.max(p.inv, 0.25); sfx('jump-a', 0.5);
   }
   wheel(dir) { if (!this.paused && !this.result) this.cycleWeapon(dir); }
   cycleWeapon(dir) {
@@ -656,13 +669,14 @@ class Play {
       spr('tiles', 225, Math.round(c.x) - 8, Math.round(c.y - c.z) - 8);
     }
     // entities, y-sorted
-    const list = this.ents.slice(); list.push(p); if (this.ally) list.push(this.ally);
+    const list = this.ents.slice(); list.push(p); if (this.ally) list.push(this.ally); if (this.opp) list.push(this.opp);
     list.sort((a, b) => a.y - b.y);
-    for (const e of list) { if (e === p) this.drawPlayer(); else if (e === this.ally) this.drawAlly(); else this.drawEnemy(e); }
+    for (const e of list) { if (e === p) this.drawPlayer(); else if (e === this.ally) this.drawAlly(); else if (e === this.opp) this.drawOpp(); else this.drawEnemy(e); }
     ctx.drawImage(m.over, 0, 0);
     // bullets
     for (const b of this.bullets) this.drawBullet(b, false);
     for (const b of this.ebullets) this.drawBullet(b, true);
+    if (this.obullets) for (const b of this.obullets) this.drawBullet(b, false);
     for (const q of this.parts) { ctx.globalAlpha = clamp(q.t / q.max * 1.5, 0, 1); ctx.fillStyle = q.col; const s = q.size; ctx.fillRect(Math.round(q.x - s / 2), Math.round(q.y - s / 2), s, s); }
     ctx.globalAlpha = 1;
     for (const n of this.nums) { ctx.globalAlpha = clamp(n.t / 0.3, 0, 1); stextO(String(n.v), n.x, n.y, 6, n.col || P.white, P.dark, 'center', 700, 2); }

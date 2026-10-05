@@ -11,7 +11,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
-ORDER = ["core.js", "data.js", "mapgen.js", "ui.js", "play.js", "main.js"]
+ORDER = ["core.js", "data.js", "mapgen.js", "ui.js", "play.js", "pvp.js", "main.js"]
 
 
 def data_uri(path, mime):
