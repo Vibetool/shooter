@@ -73,9 +73,34 @@ function textButton(sc, kind, x, y, w, h, label, fn, tip) {
 
 /* ---------------- HOME (replicates the Kenney sample layout) ---------------- */
 const SLOTS = [[301, 69], [326, 69], [301, 89], [326, 89]];
+/* the bunny and the squirrel stroll on the open sand under the banner: slow steps that swap their
+   first two frames, a stop now and then (standing frame), then off to another spot */
+const STROLLERS = [
+  { f: 12, x: 70, y: 220, speed: 6, minX: 10, maxX: 290, to: 70, wait: 0.6, dir: 1, step: 0 },  // bunny
+  { f: 4, x: 360, y: 228, speed: 5, minX: 150, maxX: 426, to: 360, wait: 2, dir: -1, step: 0 }  // squirrel
+];
+function updateStrollers(dt) {
+  for (const a of STROLLERS) {
+    if (a.wait > 0) {
+      a.wait -= dt;
+      if (a.wait <= 0) for (let k = 0; k < 10 && Math.abs(a.to - a.x) < 40; k++) a.to = a.minX + Math.random() * (a.maxX - a.minX);
+      continue;
+    }
+    const d = a.to - a.x;
+    if (Math.abs(d) < 0.5) { a.wait = 1.5 + Math.random() * 2.5; a.step = 0; continue; }
+    a.dir = Math.sign(d); a.x += a.dir * Math.min(Math.abs(d), a.speed * dt); a.step += dt;
+  }
+}
+function drawStrollers() {
+  for (const a of STROLLERS.slice().sort((p, q) => p.y - q.y)) {
+    const fr = a.wait > 0 ? a.f : a.f + (Math.floor(a.step / 0.5) % 2);
+    spr('players', fr, Math.round(a.x), a.y, a.dir < 0 ? { flip: true } : null);
+  }
+}
 class Home extends MenuScene {
   constructor() { super(); this.arrowY = 138; }
   key(k) { if (k === 'enter' || k === ' ') openLevels(); }
+  update(dt) { super.update(dt); updateStrollers(dt); }
   draw() {
     sandBg(); this.begin();
     const t = this.t;
@@ -88,6 +113,7 @@ class Home extends MenuScene {
     ctx.fillStyle = P.dust;
     disc(130, 97, 3); disc(124, 101, 3); disc(129, 106, 2); disc(121, 104, 1);
     disc(180, 95, 3); disc(172, 104, 3); disc(178, 104, 2); disc(183, 99, 1);
+    drawStrollers();
 
     // NPCs + speech bubbles
     const npcDraw = (id, x, y, bx, by, flip) => {
