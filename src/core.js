@@ -326,7 +326,7 @@ function defaultSave() {
   const now = Date.now();
   return {
     v: 1, created: now, savedAt: 0, gold: 0, owned: new Array(16).fill(0), equipped: -1, page: 0,
-    cleared: new Array(50).fill(0), best: new Array(50).fill(0),
+    cleared: new Array(LEVEL_N).fill(0), best: new Array(LEVEL_N).fill(0),
     stats: { kills: 0, goldEarned: 0, goldSpent: 0, chests: 0, deaths: 0, quests: 0, bosses: 0, playTime: 0, runs: 0 },
     npcs: { cat: { next: now, quest: null, count: 0 }, mouse: { next: now + STAGGER_MS, quest: null, count: 0 } }, lastJobAt: 0,
     upg: { regen: 0, fighter: 0, skill: 0 },
@@ -368,7 +368,7 @@ const Cloud = {
           if (remote && (remote.savedAt || 0) > (SAVE.savedAt || 0)) {
             SAVE = normalizeSave(remote);
             try { localStorage.setItem(SAVE_KEY, JSON.stringify(SAVE)); } catch (e) { /* ignore */ }
-            applyVolumes(); questTick();
+            applyVolumes(); fixJobs(); questTick();
           }
         }
       }

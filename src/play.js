@@ -24,12 +24,12 @@ class Play {
     this.flow = new Int16Array(m.W * m.H); this.flowT = 0; this.flowCell = -1; this.q = new Int32Array(m.W * m.H);
     this.portal = null;
     this.upg = { regen: SAVE.upg.regen, fighter: SAVE.upg.fighter, skill: SAVE.upg.skill };
-    this.regenT = 0; this.skillT = 0; this.ally = null;
+    this.regenT = 0; this.skillT = 0; this.shieldT = 0; this.ally = null;
     this.banner = { lines: ['LEVEL ' + this.L], sub: this.def.name, t: 2.2, kind: 'red' };
     this.paused = false; this.result = null; this.hot = []; this.saveT = 0;
     this.tMove = null; this.tAim = null;
     SAVE.stats.runs++; persist();
-    Game.toast('Shield ready: it blocks 1 damage this run');
+    Game.toast('Shield ready: it blocks 1 damage and recharges');
     Music.intensity = 1;
     const initial = Math.min(this.total, Math.ceil(this.cap * 0.6));
     for (let k = 0; k < initial; k++) this.spawnEnemy(false);
@@ -123,6 +123,7 @@ class Play {
     const D = MONSTERS[type], L = this.L, h = this.map.hgt[this.cell(x, y)];
     const e = { type, D, x, y, h: h === 1 ? 1 : 0, ramp: h === 2, hp: D.hp * hpMul(L), speed: D.speed * MONSTER_SPEED * (1 + 0.008 * (L - 1)) * (0.9 + R() * 0.2), dmg: D.dmg + enemyDmg(L) - 1,
       cd: 1 + R() * 2, flash: 0, face: 1, anim: R() * 2, dead: false, deadT: 0, boss: false, scale: 1, burst: 0, burstT: 0, wob: R() * 6, kbx: 0, kby: 0, strafe: R() < 0.5 ? 1 : -1, strafeT: 2, moving: true, hitWall: false };
+    e.gun = D.gun != null ? enemyGun(L) : null;
     if (boss) {
       e.boss = true; e.hp = boss.hp * lateHp(L); e.scale = boss.scale; e.speed = boss.speed * MONSTER_SPEED; e.moves = boss.moves; e.moveCd = 2; e.charge = 0; e.chargeT = 0; e.name = boss.name; e.dmg = 2;
     }
@@ -210,12 +211,18 @@ class Play {
       }
     }
     if (u.fighter) { if (!this.ally) this.spawnAlly(); this.updAlly(dt); }
+    if (p.shield < p.maxShield) {
+      if ((this.shieldT += dt) >= this.shieldEvery()) { this.shieldT = 0; p.shield = p.maxShield; this.spark(p.x, p.y - 8, 10, P.blueL); sfx('select-a', 0.6, 1.3); }
+    } else this.shieldT = 0;
     if (u.skill && (this.skillT += dt) >= skillEvery(u.skill)) {
       let best = null;
-      for (const e of this.ents) if (!e.dead && !e.boss && !(e.zap > 0) && (!best || e.hp > best.hp)) best = e;
+      const pool = this.ents.filter(e => !e.dead && !e.boss && !(e.zap > 0)), gunners = pool.filter(e => e.gun);
+      for (const e of gunners.length ? gunners : pool) if (!best || e.hp > best.hp) best = e;
       if (best) { best.zap = 0.6; this.skillT = 0; sfx('select-a', 0.7, 0.7); }
     }
   }
+  /* the shield comes back on its own: 8 s, or as fast as the Regen upgrade heals */
+  shieldEvery() { return this.upg.regen ? regenEvery(this.upg.regen) : 8; }
   vanish(e) {
     this.spark(e.x, e.y - 8 * e.scale, 14, P.yel); this.spark(e.x, e.y - 8 * e.scale, 8, P.yelL);
     sfx('coin-c', 0.5, 1.6);
@@ -476,9 +483,10 @@ class Play {
       const ranged = !!D.shot || e.boss;
       const see = this.los(e.x, e.y - 6, p.x, p.y - 6);
       e.strafeT -= dt; if (e.strafeT <= 0) { e.strafeT = 1.5 + R() * 2; e.strafe *= -1; }
-      if (ranged && see && d < (D.range || 110) && !e.boss) {
+      const rng_ = e.gun ? e.gun.range : D.range || 110;
+      if (ranged && see && d < rng_ && !e.boss) {
         mx = -dy / d * e.strafe * 0.8; my = dx / d * e.strafe * 0.8;
-        if (d < (D.range || 100) * 0.55) { mx -= dx / d * 0.7; my -= dy / d * 0.7; }
+        if (d < rng_ * 0.55) { mx -= dx / d * 0.7; my -= dy / d * 0.7; }
         sp *= 0.7;
       } else if (see && d < 70 && (e.h === p.h || e.ramp || p.ramp)) { mx = dx / d; my = dy / d; }
       else { [mx, my] = this.flowDir(e); }
@@ -506,12 +514,13 @@ class Play {
         e.burstT -= dt;
         if (e.burstT <= 0) {
           const a = Math.atan2(p.y - 6 - (e.y - 7), p.x - e.x) + (R() - 0.5) * D.shot.spread * Math.PI / 180;
-          this.eshoot(e.x, e.y - 7, a, D.shot.speed * (1 + 0.006 * this.L), D.shot.kind, enemyDmg(this.L));
+          this.eshoot(e.x, e.y - 7, a, e.gun ? e.gun.speed : D.shot.speed * (1 + 0.006 * this.L), D.shot.kind, enemyDmg(this.L));
           sfx(D.shot.kind === 'fire' ? 'shoot-f' : 'shoot-a', 0.25, D.shot.kind === 'fire' ? 0.7 : 1.3, 0.06);
           e.burst--; e.burstT = D.shot.gap;
         }
-      } else if (e.cd <= 0 && d < (D.range || 100) * 1.35 && this.los(e.x, e.y - 7, p.x, p.y - 6)) {
-        e.burst = D.shot.n; e.burstT = 0.25; e.cd = D.cd * (0.8 + R() * 0.4) * Math.max(0.6, 1 - this.L * 0.008);
+      } else if (e.cd <= 0 && d < (e.gun ? e.gun.range : D.range || 100) * 1.35 && this.los(e.x, e.y - 7, p.x, p.y - 6)) {
+        e.burst = D.shot.n; e.burstT = 0.25;
+        e.cd = e.gun ? e.gun.cd + R() * 0.5 : D.cd * (0.8 + R() * 0.4) * Math.max(0.6, 1 - this.L * 0.008);
       }
     }
   }
@@ -675,9 +684,9 @@ class Play {
     const bob = D.ai === 'fly' && !e.dead ? Math.round(Math.sin(e.anim * 6) * 1.5) - 4 : 0;
     const x = Math.round(e.x - 12 * sc), y = Math.round(e.y + 4 - 24 * sc) + bob;
     spr(sheet, fr, x, y, { flip: e.face < 0, scale: sc });
-    if (D.gun != null && !e.dead) {
+    if (e.gun && !e.dead) {
       const a = Math.atan2(this.p.y - 6 - (e.y - 7 * sc), this.p.x - e.x), left = Math.cos(a) < 0;
-      spr('weapons', D.gun, e.x + Math.cos(a) * 6 * sc - 12, e.y - 6 * sc + Math.sin(a) * 6 * sc - 12, { rot: a, flipY: left });
+      spr('weapons', e.gun.tile, e.x + Math.cos(a) * 6 * sc - 12, e.y - 6 * sc + Math.sin(a) * 6 * sc - 12, { rot: a, flipY: left });
     }
     if (!e.boss && !e.dead && e.hp < e.maxHp) { ctx.fillStyle = P.dark; ctx.fillRect(Math.round(e.x) - 7, y - 3, 14, 3); ctx.fillStyle = P.red; ctx.fillRect(Math.round(e.x) - 6, y - 2, Math.max(1, Math.round(12 * e.hp / e.maxHp)), 1); }
   }
@@ -700,7 +709,7 @@ class Play {
     const HW = CW / u, HH = CH / u, p = this.p;
     // health + gold
     bar(6, 6, 84, 12, p.hp / p.maxHp, 'red', 5);
-    bar(92, 6, 18, 12, p.shield / p.maxShield, 'blue', 1);
+    bar(92, 6, 18, 12, p.shield >= p.maxShield ? 1 : this.shieldT / this.shieldEvery(), 'blue', 1);
     spr('tiles', 225, 3, 19); ptext(String(SAVE.gold), 18, 20, 'A');
     // level info
     const left = Math.max(0, this.total - this.killed) + (this.bossDef && !this.bossDead ? 1 : 0);

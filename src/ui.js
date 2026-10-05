@@ -127,7 +127,7 @@ class Home extends MenuScene {
     // health bar + 100% + campaign / arsenal bars
     bar(66, 124, 52, 12, 1, 'red', 3);
     ptext('100%', 122, 122, 'A');
-    this.hit(66, 122, 92, 16, null, ['Health 100%', 'You heal fully in town between runs.', 'Every run also starts with a 1-point shield.']);
+    this.hit(66, 122, 92, 16, null, ['Health 100%', 'You heal fully in town between runs.', 'Every run starts with a 1-point shield', 'that recharges after it breaks.']);
     const ao = allOrange(), ownedN = SAVE.owned.slice(ao ? ORANGE_N : 0, ao ? WEAPONS.length : ORANGE_N).filter(Boolean).length;
     const unl = highestUnlocked(), nb = Math.ceil(unl / 5) * 5;
     let stretch = 0; for (let L = nb - 4; L <= nb; L++) if (SAVE.cleared[L - 1]) stretch++;

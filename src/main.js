@@ -12,7 +12,7 @@ async function boot(hotData) {
   try { await Promise.race([document.fonts.load('600 20px Poppins'), new Promise(r => setTimeout(r, 1500))]); } catch (e) { /* fallback font */ }
   calibrateFont();
   const bootEl = document.getElementById('boot'); if (bootEl) bootEl.remove();
-  questTick();
+  fixJobs(); questTick();
   setScene(new Home());
   Cloud.init();
   setInterval(questTick, 1000);

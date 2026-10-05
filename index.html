@@ -358,7 +358,7 @@ function defaultSave() {
   const now = Date.now();
   return {
     v: 1, created: now, savedAt: 0, gold: 0, owned: new Array(16).fill(0), equipped: -1, page: 0,
-    cleared: new Array(50).fill(0), best: new Array(50).fill(0),
+    cleared: new Array(LEVEL_N).fill(0), best: new Array(LEVEL_N).fill(0),
     stats: { kills: 0, goldEarned: 0, goldSpent: 0, chests: 0, deaths: 0, quests: 0, bosses: 0, playTime: 0, runs: 0 },
     npcs: { cat: { next: now, quest: null, count: 0 }, mouse: { next: now + STAGGER_MS, quest: null, count: 0 } }, lastJobAt: 0,
     upg: { regen: 0, fighter: 0, skill: 0 },
@@ -400,7 +400,7 @@ const Cloud = {
           if (remote && (remote.savedAt || 0) > (SAVE.savedAt || 0)) {
             SAVE = normalizeSave(remote);
             try { localStorage.setItem(SAVE_KEY, JSON.stringify(SAVE)); } catch (e) { /* ignore */ }
-            applyVolumes(); questTick();
+            applyVolumes(); fixJobs(); questTick();
           }
         }
       }
@@ -444,7 +444,7 @@ const dmgMul = () => (SAVE && SAVE.cleared[8] ? 1.5 : 1);
 const hasAutoGun = () => !!(SAVE && SAVE.cleared[8]);
 const AUTO_GUN = 1, AUTO_GUN_CD = 2; // Long Pistol, one shot every 2 seconds
 /* Upgrade menu: three tracks of five levels, bought in order. Every track costs the same per level. */
-const UPG_PRICES = [30, 50, 60, 70, 80];
+const UPG_PRICES = [60, 100, 120, 140, 160];
 const regenEvery = lvl => 8 - 1.5 * (lvl - 1);                    // seconds per 1 health
 const fighterCd = lvl => Math.max(0.25, 2 - 0.5 * (lvl - 1));     // fighter knife cooldown (floored so it never hits 0)
 const skillEvery = lvl => 10 - 2 * (lvl - 1);                     // seconds between strikes
@@ -456,8 +456,8 @@ const UPGRADES = [
     info: l => (l ? `Pip\u2019s twin hunts monsters with an orange knife every ${fighterCd(l)} s. It can\u2019t be hurt.` : 'A fighter that looks like Pip and hunts monsters with an orange knife.'),
     step: i => (i === 0 ? 'Joins every run, knife every 2 s, cannot be hurt' : `Knife every ${fighterCd(i + 1)} s instead of ${fighterCd(i)} s`) },
   { key: 'skill', name: 'Skill', icon: ['ui', 55], steps: ['Buy Skill', 'Upgrade Skill', 'Upgrade Skill', 'Upgrade Skill', 'Upgrade Skill'],
-    info: l => (l ? `Every ${skillEvery(l)} s the monster with the most health turns yellow and vanishes. Not bosses.` : 'Makes the toughest monster vanish every few seconds. Not bosses.'),
-    step: i => (i === 0 ? 'Every 10 s the toughest monster vanishes' : `Every ${skillEvery(i + 1)} s instead of ${skillEvery(i)} s`) }
+    info: l => (l ? `Every ${skillEvery(l)} s the toughest monster turns yellow and vanishes, gunners first. Not bosses.` : 'Makes the toughest monster vanish, gunners first. Not bosses.'),
+    step: i => (i === 0 ? 'Every 10 s the toughest monster vanishes, gunners first' : `Every ${skillEvery(i + 1)} s instead of ${skillEvery(i)} s`) }
 ];
 const KNIFE = { name: 'Knife', tile: 8, dmg: 2.5, rate: 2.5, range: 26, autoCd: 2 }; // autoCd: seconds between automatic strikes
 
@@ -465,10 +465,10 @@ const MONSTERS = {
   slime:  { name: 'Slime', plural: 'slimes', sheet: 'enemies', f: 0, hp: 4, speed: 26, dmg: 1, ai: 'chase' },
   bat:    { name: 'Bat', plural: 'bats', sheet: 'enemies', f: 4, hp: 4, speed: 56, dmg: 1, ai: 'fly' },
   imp:    { name: 'Ember Imp', plural: 'ember imps', sheet: 'enemies', f: 8, hp: 9, speed: 36, dmg: 1, ai: 'shoot', range: 100, cd: 2.4, shot: { speed: 105, n: 1, gap: 0, spread: 0, kind: 'fire' } },
-  hound:  { name: 'Dust Hound', plural: 'dust hounds', sheet: 'players', f: 4, hp: 16, speed: 44, dmg: 1, ai: 'shoot', range: 120, cd: 2.0, gun: 10, shot: { speed: 160, n: 2, gap: 0.16, spread: 6, kind: 'ebullet' } },
-  raider: { name: 'Raider Rabbit', plural: 'raider rabbits', sheet: 'players', f: 12, hp: 22, speed: 52, dmg: 1, ai: 'shoot', range: 110, cd: 1.8, gun: 14, shot: { speed: 170, n: 4, gap: 0.09, spread: 10, kind: 'ebullet' } }
+  hound:  { name: 'Dust Hound', plural: 'dust hounds', sheet: 'players', f: 4, hp: 16, speed: 44, dmg: 1, ai: 'shoot', range: 120, cd: 4, gun: 10, shot: { speed: 160, n: 1, gap: 0, spread: 6, kind: 'ebullet' } },
+  raider: { name: 'Raider Rabbit', plural: 'raider rabbits', sheet: 'players', f: 12, hp: 22, speed: 52, dmg: 1, ai: 'shoot', range: 110, cd: 4, gun: 14, shot: { speed: 170, n: 1, gap: 0, spread: 8, kind: 'ebullet' } }
 };
-const LEVEL_N = 50;
+const LEVEL_N = 15;
 /* theme knobs: tP/tT purple & teal plateaus, bld buildings, plz plazas, yard fenced yards,
    pP/pT/pD purple, teal, dark-sand ground patches, cac cacti, rock rocks, bone bones, tree trees */
 const THEMES = [
@@ -494,15 +494,18 @@ const THEMES = [
   { tP: 3, tT: 2, bld: 3, plz: 2, yard: 2, pP: 2, pT: 2, pD: 4, cac: 8, rock: 10, bone: 4, tree: 3 }
 ];
 const EARLY_POOLS = [['slime'], ['slime'], ['slime', 'bat'], ['slime', 'bat'], ['slime', 'bat'], ['slime', 'bat', 'imp'], ['bat', 'imp', 'slime'], ['imp', 'slime', 'bat'], ['imp', 'bat', 'hound'], ['imp', 'bat', 'hound'], ['hound', 'imp', 'slime'], ['hound', 'imp', 'bat'], ['hound', 'raider', 'bat'], ['raider', 'hound', 'imp'], ['raider', 'hound'], ['raider', 'imp', 'bat', 'hound'], ['raider', 'hound', 'slime', 'imp'], ['raider', 'hound', 'imp'], ['raider', 'hound', 'imp', 'bat'], ['raider', 'hound', 'imp']];
-const LEVEL_NAMES = ['Dusty Outskirts', 'Cactus Flats', 'Lavender Mesa', 'Old Scrapyard', 'Slime Hollow', 'Teal Oasis', 'Canyon Crossing', 'Rusty Outpost', 'Violet Badlands', 'Ember Ridge', 'Golden Dunes', 'Bandit Camp', 'Twin Plateaus', 'Chain-Link Maze', 'Bandit Fortress', 'Bone Valley', 'Overgrown Ruins', 'Steel Quarter', 'Mirage Basin', 'Sunscorch Gate', 'Copper Wells', 'Whispering Dunes', 'Lantern Square', 'Rattlesnake Pass', 'Glass Desert', 'Broken Aqueduct', 'Mesa Steps', 'Salt Flats', 'Coyote Hills', 'Scorpion Den', 'Dry Riverbed', 'Sandstorm Alley', 'Rust Gulch', 'Jade Springs', 'Smuggler\u2019s Yard', 'Vulture Peak', 'Sunken Market', 'Dune Sea', 'Iron Corral', 'Ashen Wastes', 'Moonlit Mesa', 'Prospector\u2019s Folly', 'Thornfield', 'Canyon Fort', 'Mirage Palace', 'Howling Flats', 'Gilded Ruins', 'Last Outpost', 'Tyrant\u2019s Road', 'Tyrant\u2019s Throne'];
+const LEVEL_NAMES = ['Dusty Outskirts', 'Cactus Flats', 'Lavender Mesa', 'Old Scrapyard', 'Slime Hollow', 'Teal Oasis', 'Canyon Crossing', 'Rusty Outpost', 'Violet Badlands', 'Ember Ridge', 'Golden Dunes', 'Bandit Camp', 'Twin Plateaus', 'Chain-Link Maze', 'Tyrant\u2019s Throne'];
 const LEVELS = LEVEL_NAMES.map((name, i) => {
-  const L = i + 1, r = rng(L * 104729 + 7), base = THEMES[i % THEMES.length], th = {};
-  for (const k in base) th[k] = Math.max(0, base[k] + (i >= THEMES.length ? rint(r, -1, 2) : 0));
-  let pool;
-  if (i < EARLY_POOLS.length) pool = EARLY_POOLS[i];
-  else { pool = ['raider', 'hound']; const extra = ['imp', 'bat', 'slime'].filter(() => r() < 0.6); pool = pool.concat(extra.length ? extra : ['imp']); }
-  return { name, w: 40 + Math.min(20, Math.floor(L * 0.6)), h: 28 + Math.min(12, Math.floor(L * 0.4)), pool, th };
+  const L = i + 1, src = i === LEVEL_N - 1 ? THEMES.length - 1 : i; // the last level uses the final arena's theme and monsters
+  return { name, w: 40 + Math.min(20, Math.floor(L * 0.6)), h: 28 + Math.min(12, Math.floor(L * 0.4)), pool: EARLY_POOLS[src], th: { ...THEMES[src] } };
 });
+/* gun-holding monsters (hounds, raiders) fire one bullet at a time and carry a better gun later on */
+const ENEMY_GUNS = [
+  { tile: 10, cd: 4, speed: 160, range: 120 }, // Levels 1-10: green pistol, at most one shot every 4 s
+  { tile: 11, cd: 4, speed: 200, range: 150 }, // Levels 11-13: green long pistol, longer reach
+  { tile: 12, cd: 2, speed: 190, range: 140 }  // Levels 14-15: green blaster (third stage), one shot every 2 s
+];
+const enemyGun = L => ENEMY_GUNS[L >= 14 ? 2 : L >= 11 ? 1 : 0];
 /* every monster (bosses included) moves at 2/3 of its listed speed */
 const MONSTER_SPEED = 2 / 3;
 const BOSS_KINDS = [
@@ -619,7 +622,7 @@ function makeQuest(npcId) {
   const npc = SAVE.npcs[npcId], t = Math.min(npc.count, MAX_TIER);
   const r = rng(npc.count * 7919 + (npcId === 'cat' ? 17 : 911) + (SAVE.created % 100003));
   const unl = highestUnlocked();
-  const tierL = clamp(1 + 5 * t, 1, LEVEL_N);
+  const tierL = clamp(Math.round(1 + 1.4 * t), 1, LEVEL_N);
   const lvl = Math.max(1, Math.min(tierL, unl + 1));
   let q;
   if (npc.count === 0 && npcId === 'cat') {
@@ -665,6 +668,15 @@ function makeQuest(npcId) {
    so a new job shows up every 10 minutes. Mira goes first whenever both are due
    (a fresh game, or coming back after a long break). Each keeps at most one open job. */
 function jobDueAt(id) { return Math.max(SAVE.npcs[id].next, (SAVE.lastJobAt || 0) + STAGGER_MS); }
+/* jobs saved before the campaign shrank may point past the last level */
+function fixJobs() {
+  for (const id of ['cat', 'mouse']) {
+    const q = SAVE.npcs[id].quest; if (!q) continue;
+    if (q.lvl > LEVEL_N) q.lvl = LEVEL_N;
+    if (q.minL > LEVEL_N) q.minL = LEVEL_N;
+    if (q.type === 'boss' && !BOSSES[q.lvl]) q.lvl = Math.max(5, Math.floor(q.lvl / 5) * 5);
+  }
+}
 function questTick() {
   if (!SAVE) return;
   const now = Date.now();
@@ -1126,7 +1138,7 @@ class Home extends MenuScene {
     // health bar + 100% + campaign / arsenal bars
     bar(66, 124, 52, 12, 1, 'red', 3);
     ptext('100%', 122, 122, 'A');
-    this.hit(66, 122, 92, 16, null, ['Health 100%', 'You heal fully in town between runs.', 'Every run also starts with a 1-point shield.']);
+    this.hit(66, 122, 92, 16, null, ['Health 100%', 'You heal fully in town between runs.', 'Every run starts with a 1-point shield', 'that recharges after it breaks.']);
     const ao = allOrange(), ownedN = SAVE.owned.slice(ao ? ORANGE_N : 0, ao ? WEAPONS.length : ORANGE_N).filter(Boolean).length;
     const unl = highestUnlocked(), nb = Math.ceil(unl / 5) * 5;
     let stretch = 0; for (let L = nb - 4; L <= nb; L++) if (SAVE.cleared[L - 1]) stretch++;
@@ -1516,12 +1528,12 @@ class Play {
     this.flow = new Int16Array(m.W * m.H); this.flowT = 0; this.flowCell = -1; this.q = new Int32Array(m.W * m.H);
     this.portal = null;
     this.upg = { regen: SAVE.upg.regen, fighter: SAVE.upg.fighter, skill: SAVE.upg.skill };
-    this.regenT = 0; this.skillT = 0; this.ally = null;
+    this.regenT = 0; this.skillT = 0; this.shieldT = 0; this.ally = null;
     this.banner = { lines: ['LEVEL ' + this.L], sub: this.def.name, t: 2.2, kind: 'red' };
     this.paused = false; this.result = null; this.hot = []; this.saveT = 0;
     this.tMove = null; this.tAim = null;
     SAVE.stats.runs++; persist();
-    Game.toast('Shield ready: it blocks 1 damage this run');
+    Game.toast('Shield ready: it blocks 1 damage and recharges');
     Music.intensity = 1;
     const initial = Math.min(this.total, Math.ceil(this.cap * 0.6));
     for (let k = 0; k < initial; k++) this.spawnEnemy(false);
@@ -1615,6 +1627,7 @@ class Play {
     const D = MONSTERS[type], L = this.L, h = this.map.hgt[this.cell(x, y)];
     const e = { type, D, x, y, h: h === 1 ? 1 : 0, ramp: h === 2, hp: D.hp * hpMul(L), speed: D.speed * MONSTER_SPEED * (1 + 0.008 * (L - 1)) * (0.9 + R() * 0.2), dmg: D.dmg + enemyDmg(L) - 1,
       cd: 1 + R() * 2, flash: 0, face: 1, anim: R() * 2, dead: false, deadT: 0, boss: false, scale: 1, burst: 0, burstT: 0, wob: R() * 6, kbx: 0, kby: 0, strafe: R() < 0.5 ? 1 : -1, strafeT: 2, moving: true, hitWall: false };
+    e.gun = D.gun != null ? enemyGun(L) : null;
     if (boss) {
       e.boss = true; e.hp = boss.hp * lateHp(L); e.scale = boss.scale; e.speed = boss.speed * MONSTER_SPEED; e.moves = boss.moves; e.moveCd = 2; e.charge = 0; e.chargeT = 0; e.name = boss.name; e.dmg = 2;
     }
@@ -1702,12 +1715,18 @@ class Play {
       }
     }
     if (u.fighter) { if (!this.ally) this.spawnAlly(); this.updAlly(dt); }
+    if (p.shield < p.maxShield) {
+      if ((this.shieldT += dt) >= this.shieldEvery()) { this.shieldT = 0; p.shield = p.maxShield; this.spark(p.x, p.y - 8, 10, P.blueL); sfx('select-a', 0.6, 1.3); }
+    } else this.shieldT = 0;
     if (u.skill && (this.skillT += dt) >= skillEvery(u.skill)) {
       let best = null;
-      for (const e of this.ents) if (!e.dead && !e.boss && !(e.zap > 0) && (!best || e.hp > best.hp)) best = e;
+      const pool = this.ents.filter(e => !e.dead && !e.boss && !(e.zap > 0)), gunners = pool.filter(e => e.gun);
+      for (const e of gunners.length ? gunners : pool) if (!best || e.hp > best.hp) best = e;
       if (best) { best.zap = 0.6; this.skillT = 0; sfx('select-a', 0.7, 0.7); }
     }
   }
+  /* the shield comes back on its own: 8 s, or as fast as the Regen upgrade heals */
+  shieldEvery() { return this.upg.regen ? regenEvery(this.upg.regen) : 8; }
   vanish(e) {
     this.spark(e.x, e.y - 8 * e.scale, 14, P.yel); this.spark(e.x, e.y - 8 * e.scale, 8, P.yelL);
     sfx('coin-c', 0.5, 1.6);
@@ -1968,9 +1987,10 @@ class Play {
       const ranged = !!D.shot || e.boss;
       const see = this.los(e.x, e.y - 6, p.x, p.y - 6);
       e.strafeT -= dt; if (e.strafeT <= 0) { e.strafeT = 1.5 + R() * 2; e.strafe *= -1; }
-      if (ranged && see && d < (D.range || 110) && !e.boss) {
+      const rng_ = e.gun ? e.gun.range : D.range || 110;
+      if (ranged && see && d < rng_ && !e.boss) {
         mx = -dy / d * e.strafe * 0.8; my = dx / d * e.strafe * 0.8;
-        if (d < (D.range || 100) * 0.55) { mx -= dx / d * 0.7; my -= dy / d * 0.7; }
+        if (d < rng_ * 0.55) { mx -= dx / d * 0.7; my -= dy / d * 0.7; }
         sp *= 0.7;
       } else if (see && d < 70 && (e.h === p.h || e.ramp || p.ramp)) { mx = dx / d; my = dy / d; }
       else { [mx, my] = this.flowDir(e); }
@@ -1998,12 +2018,13 @@ class Play {
         e.burstT -= dt;
         if (e.burstT <= 0) {
           const a = Math.atan2(p.y - 6 - (e.y - 7), p.x - e.x) + (R() - 0.5) * D.shot.spread * Math.PI / 180;
-          this.eshoot(e.x, e.y - 7, a, D.shot.speed * (1 + 0.006 * this.L), D.shot.kind, enemyDmg(this.L));
+          this.eshoot(e.x, e.y - 7, a, e.gun ? e.gun.speed : D.shot.speed * (1 + 0.006 * this.L), D.shot.kind, enemyDmg(this.L));
           sfx(D.shot.kind === 'fire' ? 'shoot-f' : 'shoot-a', 0.25, D.shot.kind === 'fire' ? 0.7 : 1.3, 0.06);
           e.burst--; e.burstT = D.shot.gap;
         }
-      } else if (e.cd <= 0 && d < (D.range || 100) * 1.35 && this.los(e.x, e.y - 7, p.x, p.y - 6)) {
-        e.burst = D.shot.n; e.burstT = 0.25; e.cd = D.cd * (0.8 + R() * 0.4) * Math.max(0.6, 1 - this.L * 0.008);
+      } else if (e.cd <= 0 && d < (e.gun ? e.gun.range : D.range || 100) * 1.35 && this.los(e.x, e.y - 7, p.x, p.y - 6)) {
+        e.burst = D.shot.n; e.burstT = 0.25;
+        e.cd = e.gun ? e.gun.cd + R() * 0.5 : D.cd * (0.8 + R() * 0.4) * Math.max(0.6, 1 - this.L * 0.008);
       }
     }
   }
@@ -2167,9 +2188,9 @@ class Play {
     const bob = D.ai === 'fly' && !e.dead ? Math.round(Math.sin(e.anim * 6) * 1.5) - 4 : 0;
     const x = Math.round(e.x - 12 * sc), y = Math.round(e.y + 4 - 24 * sc) + bob;
     spr(sheet, fr, x, y, { flip: e.face < 0, scale: sc });
-    if (D.gun != null && !e.dead) {
+    if (e.gun && !e.dead) {
       const a = Math.atan2(this.p.y - 6 - (e.y - 7 * sc), this.p.x - e.x), left = Math.cos(a) < 0;
-      spr('weapons', D.gun, e.x + Math.cos(a) * 6 * sc - 12, e.y - 6 * sc + Math.sin(a) * 6 * sc - 12, { rot: a, flipY: left });
+      spr('weapons', e.gun.tile, e.x + Math.cos(a) * 6 * sc - 12, e.y - 6 * sc + Math.sin(a) * 6 * sc - 12, { rot: a, flipY: left });
     }
     if (!e.boss && !e.dead && e.hp < e.maxHp) { ctx.fillStyle = P.dark; ctx.fillRect(Math.round(e.x) - 7, y - 3, 14, 3); ctx.fillStyle = P.red; ctx.fillRect(Math.round(e.x) - 6, y - 2, Math.max(1, Math.round(12 * e.hp / e.maxHp)), 1); }
   }
@@ -2192,7 +2213,7 @@ class Play {
     const HW = CW / u, HH = CH / u, p = this.p;
     // health + gold
     bar(6, 6, 84, 12, p.hp / p.maxHp, 'red', 5);
-    bar(92, 6, 18, 12, p.shield / p.maxShield, 'blue', 1);
+    bar(92, 6, 18, 12, p.shield >= p.maxShield ? 1 : this.shieldT / this.shieldEvery(), 'blue', 1);
     spr('tiles', 225, 3, 19); ptext(String(SAVE.gold), 18, 20, 'A');
     // level info
     const left = Math.max(0, this.total - this.killed) + (this.bossDef && !this.bossDead ? 1 : 0);
@@ -2329,7 +2350,7 @@ async function boot(hotData) {
   try { await Promise.race([document.fonts.load('600 20px Poppins'), new Promise(r => setTimeout(r, 1500))]); } catch (e) { /* fallback font */ }
   calibrateFont();
   const bootEl = document.getElementById('boot'); if (bootEl) bootEl.remove();
-  questTick();
+  fixJobs(); questTick();
   setScene(new Home());
   Cloud.init();
   setInterval(questTick, 1000);

@@ -22,7 +22,7 @@ const dmgMul = () => (SAVE && SAVE.cleared[8] ? 1.5 : 1);
 const hasAutoGun = () => !!(SAVE && SAVE.cleared[8]);
 const AUTO_GUN = 1, AUTO_GUN_CD = 2; // Long Pistol, one shot every 2 seconds
 /* Upgrade menu: three tracks of five levels, bought in order. Every track costs the same per level. */
-const UPG_PRICES = [30, 50, 60, 70, 80];
+const UPG_PRICES = [60, 100, 120, 140, 160];
 const regenEvery = lvl => 8 - 1.5 * (lvl - 1);                    // seconds per 1 health
 const fighterCd = lvl => Math.max(0.25, 2 - 0.5 * (lvl - 1));     // fighter knife cooldown (floored so it never hits 0)
 const skillEvery = lvl => 10 - 2 * (lvl - 1);                     // seconds between strikes
@@ -34,8 +34,8 @@ const UPGRADES = [
     info: l => (l ? `Pip\u2019s twin hunts monsters with an orange knife every ${fighterCd(l)} s. It can\u2019t be hurt.` : 'A fighter that looks like Pip and hunts monsters with an orange knife.'),
     step: i => (i === 0 ? 'Joins every run, knife every 2 s, cannot be hurt' : `Knife every ${fighterCd(i + 1)} s instead of ${fighterCd(i)} s`) },
   { key: 'skill', name: 'Skill', icon: ['ui', 55], steps: ['Buy Skill', 'Upgrade Skill', 'Upgrade Skill', 'Upgrade Skill', 'Upgrade Skill'],
-    info: l => (l ? `Every ${skillEvery(l)} s the monster with the most health turns yellow and vanishes. Not bosses.` : 'Makes the toughest monster vanish every few seconds. Not bosses.'),
-    step: i => (i === 0 ? 'Every 10 s the toughest monster vanishes' : `Every ${skillEvery(i + 1)} s instead of ${skillEvery(i)} s`) }
+    info: l => (l ? `Every ${skillEvery(l)} s the toughest monster turns yellow and vanishes, gunners first. Not bosses.` : 'Makes the toughest monster vanish, gunners first. Not bosses.'),
+    step: i => (i === 0 ? 'Every 10 s the toughest monster vanishes, gunners first' : `Every ${skillEvery(i + 1)} s instead of ${skillEvery(i)} s`) }
 ];
 const KNIFE = { name: 'Knife', tile: 8, dmg: 2.5, rate: 2.5, range: 26, autoCd: 2 }; // autoCd: seconds between automatic strikes
 
@@ -43,10 +43,10 @@ const MONSTERS = {
   slime:  { name: 'Slime', plural: 'slimes', sheet: 'enemies', f: 0, hp: 4, speed: 26, dmg: 1, ai: 'chase' },
   bat:    { name: 'Bat', plural: 'bats', sheet: 'enemies', f: 4, hp: 4, speed: 56, dmg: 1, ai: 'fly' },
   imp:    { name: 'Ember Imp', plural: 'ember imps', sheet: 'enemies', f: 8, hp: 9, speed: 36, dmg: 1, ai: 'shoot', range: 100, cd: 2.4, shot: { speed: 105, n: 1, gap: 0, spread: 0, kind: 'fire' } },
-  hound:  { name: 'Dust Hound', plural: 'dust hounds', sheet: 'players', f: 4, hp: 16, speed: 44, dmg: 1, ai: 'shoot', range: 120, cd: 2.0, gun: 10, shot: { speed: 160, n: 2, gap: 0.16, spread: 6, kind: 'ebullet' } },
-  raider: { name: 'Raider Rabbit', plural: 'raider rabbits', sheet: 'players', f: 12, hp: 22, speed: 52, dmg: 1, ai: 'shoot', range: 110, cd: 1.8, gun: 14, shot: { speed: 170, n: 4, gap: 0.09, spread: 10, kind: 'ebullet' } }
+  hound:  { name: 'Dust Hound', plural: 'dust hounds', sheet: 'players', f: 4, hp: 16, speed: 44, dmg: 1, ai: 'shoot', range: 120, cd: 4, gun: 10, shot: { speed: 160, n: 1, gap: 0, spread: 6, kind: 'ebullet' } },
+  raider: { name: 'Raider Rabbit', plural: 'raider rabbits', sheet: 'players', f: 12, hp: 22, speed: 52, dmg: 1, ai: 'shoot', range: 110, cd: 4, gun: 14, shot: { speed: 170, n: 1, gap: 0, spread: 8, kind: 'ebullet' } }
 };
-const LEVEL_N = 50;
+const LEVEL_N = 15;
 /* theme knobs: tP/tT purple & teal plateaus, bld buildings, plz plazas, yard fenced yards,
    pP/pT/pD purple, teal, dark-sand ground patches, cac cacti, rock rocks, bone bones, tree trees */
 const THEMES = [
@@ -72,15 +72,18 @@ const THEMES = [
   { tP: 3, tT: 2, bld: 3, plz: 2, yard: 2, pP: 2, pT: 2, pD: 4, cac: 8, rock: 10, bone: 4, tree: 3 }
 ];
 const EARLY_POOLS = [['slime'], ['slime'], ['slime', 'bat'], ['slime', 'bat'], ['slime', 'bat'], ['slime', 'bat', 'imp'], ['bat', 'imp', 'slime'], ['imp', 'slime', 'bat'], ['imp', 'bat', 'hound'], ['imp', 'bat', 'hound'], ['hound', 'imp', 'slime'], ['hound', 'imp', 'bat'], ['hound', 'raider', 'bat'], ['raider', 'hound', 'imp'], ['raider', 'hound'], ['raider', 'imp', 'bat', 'hound'], ['raider', 'hound', 'slime', 'imp'], ['raider', 'hound', 'imp'], ['raider', 'hound', 'imp', 'bat'], ['raider', 'hound', 'imp']];
-const LEVEL_NAMES = ['Dusty Outskirts', 'Cactus Flats', 'Lavender Mesa', 'Old Scrapyard', 'Slime Hollow', 'Teal Oasis', 'Canyon Crossing', 'Rusty Outpost', 'Violet Badlands', 'Ember Ridge', 'Golden Dunes', 'Bandit Camp', 'Twin Plateaus', 'Chain-Link Maze', 'Bandit Fortress', 'Bone Valley', 'Overgrown Ruins', 'Steel Quarter', 'Mirage Basin', 'Sunscorch Gate', 'Copper Wells', 'Whispering Dunes', 'Lantern Square', 'Rattlesnake Pass', 'Glass Desert', 'Broken Aqueduct', 'Mesa Steps', 'Salt Flats', 'Coyote Hills', 'Scorpion Den', 'Dry Riverbed', 'Sandstorm Alley', 'Rust Gulch', 'Jade Springs', 'Smuggler\u2019s Yard', 'Vulture Peak', 'Sunken Market', 'Dune Sea', 'Iron Corral', 'Ashen Wastes', 'Moonlit Mesa', 'Prospector\u2019s Folly', 'Thornfield', 'Canyon Fort', 'Mirage Palace', 'Howling Flats', 'Gilded Ruins', 'Last Outpost', 'Tyrant\u2019s Road', 'Tyrant\u2019s Throne'];
+const LEVEL_NAMES = ['Dusty Outskirts', 'Cactus Flats', 'Lavender Mesa', 'Old Scrapyard', 'Slime Hollow', 'Teal Oasis', 'Canyon Crossing', 'Rusty Outpost', 'Violet Badlands', 'Ember Ridge', 'Golden Dunes', 'Bandit Camp', 'Twin Plateaus', 'Chain-Link Maze', 'Tyrant\u2019s Throne'];
 const LEVELS = LEVEL_NAMES.map((name, i) => {
-  const L = i + 1, r = rng(L * 104729 + 7), base = THEMES[i % THEMES.length], th = {};
-  for (const k in base) th[k] = Math.max(0, base[k] + (i >= THEMES.length ? rint(r, -1, 2) : 0));
-  let pool;
-  if (i < EARLY_POOLS.length) pool = EARLY_POOLS[i];
-  else { pool = ['raider', 'hound']; const extra = ['imp', 'bat', 'slime'].filter(() => r() < 0.6); pool = pool.concat(extra.length ? extra : ['imp']); }
-  return { name, w: 40 + Math.min(20, Math.floor(L * 0.6)), h: 28 + Math.min(12, Math.floor(L * 0.4)), pool, th };
+  const L = i + 1, src = i === LEVEL_N - 1 ? THEMES.length - 1 : i; // the last level uses the final arena's theme and monsters
+  return { name, w: 40 + Math.min(20, Math.floor(L * 0.6)), h: 28 + Math.min(12, Math.floor(L * 0.4)), pool: EARLY_POOLS[src], th: { ...THEMES[src] } };
 });
+/* gun-holding monsters (hounds, raiders) fire one bullet at a time and carry a better gun later on */
+const ENEMY_GUNS = [
+  { tile: 10, cd: 4, speed: 160, range: 120 }, // Levels 1-10: green pistol, at most one shot every 4 s
+  { tile: 11, cd: 4, speed: 200, range: 150 }, // Levels 11-13: green long pistol, longer reach
+  { tile: 12, cd: 2, speed: 190, range: 140 }  // Levels 14-15: green blaster (third stage), one shot every 2 s
+];
+const enemyGun = L => ENEMY_GUNS[L >= 14 ? 2 : L >= 11 ? 1 : 0];
 /* every monster (bosses included) moves at 2/3 of its listed speed */
 const MONSTER_SPEED = 2 / 3;
 const BOSS_KINDS = [
@@ -197,7 +200,7 @@ function makeQuest(npcId) {
   const npc = SAVE.npcs[npcId], t = Math.min(npc.count, MAX_TIER);
   const r = rng(npc.count * 7919 + (npcId === 'cat' ? 17 : 911) + (SAVE.created % 100003));
   const unl = highestUnlocked();
-  const tierL = clamp(1 + 5 * t, 1, LEVEL_N);
+  const tierL = clamp(Math.round(1 + 1.4 * t), 1, LEVEL_N);
   const lvl = Math.max(1, Math.min(tierL, unl + 1));
   let q;
   if (npc.count === 0 && npcId === 'cat') {
@@ -243,6 +246,15 @@ function makeQuest(npcId) {
    so a new job shows up every 10 minutes. Mira goes first whenever both are due
    (a fresh game, or coming back after a long break). Each keeps at most one open job. */
 function jobDueAt(id) { return Math.max(SAVE.npcs[id].next, (SAVE.lastJobAt || 0) + STAGGER_MS); }
+/* jobs saved before the campaign shrank may point past the last level */
+function fixJobs() {
+  for (const id of ['cat', 'mouse']) {
+    const q = SAVE.npcs[id].quest; if (!q) continue;
+    if (q.lvl > LEVEL_N) q.lvl = LEVEL_N;
+    if (q.minL > LEVEL_N) q.minL = LEVEL_N;
+    if (q.type === 'boss' && !BOSSES[q.lvl]) q.lvl = Math.max(5, Math.floor(q.lvl / 5) * 5);
+  }
+}
 function questTick() {
   if (!SAVE) return;
   const now = Date.now();
