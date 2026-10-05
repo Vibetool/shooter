@@ -12,10 +12,11 @@ async function boot(hotData) {
   try { await Promise.race([document.fonts.load('600 20px Poppins'), new Promise(r => setTimeout(r, 1500))]); } catch (e) { /* fallback font */ }
   calibrateFont();
   const bootEl = document.getElementById('boot'); if (bootEl) bootEl.remove();
-  fixJobs(); questTick();
-  setScene(new Home());
+  fixJobs(); if (!SAVE.banned) questTick();
+  setScene(SAVE.banned ? new BannedScreen() : new Home());
   Cloud.init();
-  setInterval(questTick, 1000);
+  PVP.start(); // account sync + admin changes; the duel lobby stays hidden until PVP is opened
+  setInterval(() => { if (!SAVE.banned) questTick(); }, 1000);
   let last = performance.now();
   const frame = now => {
     const dt = Math.min(0.05, Math.max(0, (now - last) / 1000)); last = now;

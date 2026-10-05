@@ -7,9 +7,12 @@
    The public broker drops messages above ~10 per second per client (bursts
    included), so a duel sends 7 evenly spaced updates a second, never sends
    extra messages in between, and repeats every shot and knife swing once.
-   Admin tools (ban, kick, rename, reset record) are signed with a key derived
-   from the admin password; only its double hash lives here. Without a server
-   this stops casual tampering only: a modified copy of the game can ignore it.
+   Every copy of the game keeps a small account summary on the broker (retained),
+   so the admin can see players who are offline. Admin changes are stored the same
+   way, signed (ECDSA) with a key derived from the admin password, and applied the
+   next time that player opens the game. Only the public half of that key lives
+   here, so a copy of the game can check admin changes but cannot make them.
+   Without a real server a modified copy can still ignore them.
    ========================================================================== */
 const PVP_LIBS = ['https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js', 'https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js'];
 const PVP_BROKERS = ['wss://broker-cn.emqx.io:8084/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
@@ -21,12 +24,27 @@ const PVP_HP = 200, PVP_MAP = 1, PVP_ASK_MS = 30000, PVP_SITE = 'https://vibetoo
 const PVP_ADJ = ['Swift', 'Dusty', 'Brave', 'Sly', 'Lucky', 'Rusty', 'Sandy', 'Wild', 'Quiet', 'Bold', 'Sunny', 'Grumpy'];
 const PVP_ANIMAL = ['Fox', 'Lizard', 'Hawk', 'Coyote', 'Gecko', 'Viper', 'Camel', 'Badger', 'Scorpion', 'Owl', 'Hare', 'Lynx'];
 const PVP_STATUS = { town: 'In town', run: 'On a run', duel: 'In a duel' };
-const PVP_ADMIN_SALT = 'dustwell-admin-v1', PVP_ADMIN_HASH = '27533efa96aba0d2bd99cc53f2000c1751b060b9ab3cf0aff3f3f959adb3bc83';
-async function sha256hex(s) {
-  const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
-  return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
+const PVP_ADMIN_SALT = 'dustwell-admin-v2';
+const PVP_ADMIN_PUB = { kty: 'EC', crv: 'P-256', x: 'I-iTWHWYpGV1cvJxuZ3NjigCe6DtNSTbQtKyz6OdsEE', y: 'ZhjfHHvicswI3Am3w9Uaz9GHbhI8Lnszfx3ksO8V6ss' };
+const ECDSA_KEY = { name: 'ECDSA', namedCurve: 'P-256' }, ECDSA_SIG = { name: 'ECDSA', hash: 'SHA-256' };
+const b64u = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64u = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), ch => ch.charCodeAt(0));
+let adminPub = null;
+/* admin messages are { d: JSON text, s: signature of d }; returns the parsed data, or null if the signature is wrong */
+async function adminOpen(m) {
+  try {
+    if (!m || typeof m.d !== 'string' || typeof m.s !== 'string') return null;
+    adminPub = adminPub || await crypto.subtle.importKey('jwk', PVP_ADMIN_PUB, ECDSA_KEY, false, ['verify']);
+    return (await crypto.subtle.verify(ECDSA_SIG, adminPub, unb64u(m.s), new TextEncoder().encode(m.d))) ? JSON.parse(m.d) : null;
+  } catch (e) { return null; }
 }
-async function adminSigned(k) { try { return typeof k === 'string' && k.length === 64 && (await sha256hex(k)) === PVP_ADMIN_HASH; } catch (e) { return false; } }
+async function adminSeal(key, data) {
+  const d = JSON.stringify(data);
+  return { d, s: b64u(new Uint8Array(await crypto.subtle.sign(ECDSA_SIG, key, new TextEncoder().encode(d)))) };
+}
+/* weapon bits: '1' give, '0' take away, '.' leave as it is */
+const mergeBits = (base, over) => base.split('').map((ch, i) => (over && over[i] && over[i] !== '.' ? over[i] : ch)).join('');
+const mergeUpg = (base, over) => base.map((x, j) => (over && over[j] != null ? over[j] : x));
 const cleanName = n => String(n).replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 16);
 function fitText(str, maxW, size, weight) {
   if (textW(str, size, weight) <= maxW) return str;
@@ -45,7 +63,8 @@ function loadScript(src) {
 const PVP = {
   state: 'off', client: null, id: 'p' + Math.random().toString(36).slice(2, 10),
   players: {}, outgoing: null, invite: null, match: null, lastStatus: '', beat: 0,
-  bans: new Map(), banned: false, kicked: false, adminKey: null, adminFails: 0, adminLock: 0,
+  bans: new Map(), bansSeq: 0, banned: false, adminKey: null, adminFails: 0, adminLock: 0,
+  lobbyOn: false, accounts: {}, pending: {}, acctT: 0, acctDirty: true,
   name() {
     if (!SAVE.pvpName) { SAVE.pvpName = this.randomName(); persist(); }
     return SAVE.pvpName;
@@ -66,7 +85,7 @@ const PVP = {
     if (!window.mqtt) for (const src of PVP_LIBS) { if (await loadScript(src) && window.mqtt) break; }
     if (!window.mqtt) { this.state = 'failed'; return; }
     this.state = 'connecting';
-    for (const url of PVP_BROKERS) if (await this.connect(url)) { this.state = 'online'; this.announce(true); return; }
+    for (const url of PVP_BROKERS) if (await this.connect(url)) { this.state = 'online'; this.announce(true); this.syncAccount(); return; }
     this.state = 'failed';
   },
   connect(url) {
@@ -78,9 +97,10 @@ const PVP = {
       });
       const done = ok => { if (settled) return; settled = true; if (!ok) { try { c.end(true); } catch (e) { /* closed */ } } resolve(ok); };
       c.on('connect', () => {
-        c.subscribe([PVP_PFX + 'p/+', PVP_PFX + 'u/' + this.id, PVP_PFX + 'bans'], { qos: 1 });
+        c.subscribe([PVP_PFX + 'p/+', PVP_PFX + 'u/' + this.id, PVP_PFX + 'bans', PVP_PFX + 'cmd/' + this.id], { qos: 1 });
+        if (this.adminKey) c.subscribe([PVP_PFX + 'acct/+', PVP_PFX + 'cmd/+'], { qos: 1 });
         if (this.match) c.subscribe(this.match.topic, { qos: 0 });
-        if (!settled) { this.client = c; done(true); } else if (this.client === c) this.announce(true);
+        if (!settled) { this.client = c; done(true); } else if (this.client === c) { this.announce(true); this.syncAccount(); }
       });
       c.on('message', (topic, buf) => this.onMessage(topic, buf));
       c.on('error', () => {});
@@ -89,7 +109,7 @@ const PVP = {
   },
   status() { return this.match ? 'duel' : SCENES.some(sc => sc instanceof Play && !(sc instanceof PvpMatch)) ? 'run' : 'town'; },
   announce(force) {
-    if (!this.client || this.state !== 'online' || this.banned || this.kicked) return;
+    if (!this.client || this.state !== 'online' || !this.lobbyOn || this.banned || SAVE.banned) return;
     const st = this.status();
     if (!force && st === this.lastStatus) return;
     this.lastStatus = st; this.beat = performance.now();
@@ -103,6 +123,7 @@ const PVP = {
     if (this.state !== 'online') return;
     const now = performance.now();
     this.announce(now - this.beat > 15000);
+    if ((this.acctDirty && now - this.acctT > 10000) || now - this.acctT > 30000) this.syncAccount();
     for (const id in this.players) if (now - this.players[id].seen > 40000) delete this.players[id];
     const o = this.outgoing;
     if (o && Date.now() - o.at > PVP_ASK_MS) { this.send(o.to, { t: 'cancel', mid: o.mid }); Game.toast('No answer from ' + o.name); this.outgoing = null; }
@@ -112,19 +133,28 @@ const PVP = {
     let m = null;
     if (txt) { try { m = JSON.parse(txt); } catch (e) { return; } }
     if (rest === 'bans') { this.onBans(m); return; }
+    if (rest === 'cmd/' + this.id) { this.onCmd(m); return; }
+    if (rest.startsWith('acct/')) { const id = rest.slice(5); if (m && m.id === id) this.accounts[id] = m; else if (!m) delete this.accounts[id]; return; }
+    if (rest.startsWith('cmd/')) {
+      const id = rest.slice(4);
+      if (!m) delete this.pending[id];
+      else adminOpen(m).then(c => { if (c && c.id === id && c.set && !(this.pending[id] && this.pending[id].seq > c.seq)) this.pending[id] = c; });
+      return;
+    }
     if (rest.startsWith('p/')) {
       const id = rest.slice(2); if (id === this.id) return;
       const num = v => Math.max(0, Math.min(99999, Math.floor(Number(v)) || 0));
       if (!m || this.bans.has(id)) delete this.players[id];
       else this.players[id] = { id, name: String(m.n || 'Player').slice(0, 24), st: PVP_STATUS[m.s] ? m.s : 'town', w: num(m.w), l: num(m.l), seen: performance.now() };
+      // an empty presence is also what the broker sends when a connection dies, so the admin list can mark that account offline
+      if (!m && this.accounts[id] && !this.accounts[id].b) Object.assign(this.accounts[id], { off: 1, t: Date.now() });
     } else if (rest === 'u/' + this.id) { if (m && typeof m.from === 'string') this.onInbox(m); }
     else if (this.match && rest === 'm/' + this.match.mid) { if (m) this.match.onNet(m); }
   },
   onInbox(m) {
     const from = m.from, known = this.players[from];
-    if (m.t === 'admin') { adminSigned(m.k).then(ok => { if (ok) this.applyAdmin(m); }); return; }
     if (m.t === 'inv') {
-      if (this.match || this.invite || this.banned || this.kicked || this.bans.has(from)) { this.send(from, { t: 'ans', mid: m.mid, ok: false, why: 'busy' }); return; }
+      if (this.match || this.invite || this.banned || SAVE.banned || this.bans.has(from)) { this.send(from, { t: 'ans', mid: m.mid, ok: false, why: 'busy' }); return; }
       if (this.outgoing) { this.send(this.outgoing.to, { t: 'cancel', mid: this.outgoing.mid }); this.outgoing = null; }
       this.invite = { from, name: String(m.n || (known && known.name) || 'A player').slice(0, 24), bo: m.bo === 3 ? 3 : 1, mid: String(m.mid), at: Date.now(), accepted: false };
       const top = topScene(); if (top instanceof Play && !(top instanceof PvpMatch)) top.paused = true;
@@ -143,7 +173,7 @@ const PVP = {
     }
   },
   challenge(pl, bo) {
-    if (this.outgoing || this.match || this.state !== 'online' || this.banned || this.kicked || this.bans.has(pl.id)) return;
+    if (this.outgoing || this.match || this.state !== 'online' || this.banned || SAVE.banned || this.bans.has(pl.id)) return;
     const mid = this.id + '-' + Date.now().toString(36);
     this.outgoing = { to: pl.id, name: pl.name, bo, mid, at: Date.now() };
     this.send(pl.id, { t: 'inv', n: this.name(), bo, mid });
@@ -166,17 +196,61 @@ const PVP = {
   openLobby() { setScene(new Home()); pushScene(new Levels()); pushScene(new PvpLobby()); },
   /* ---- moderation ---- */
   async onBans(m) {
-    if (!m || !Array.isArray(m.list) || !(await adminSigned(m.k))) return;
-    this.bans = new Map(m.list.filter(b => b && typeof b.id === 'string').map(b => [b.id, String(b.name || 'Player').slice(0, 24)]));
+    const b = await adminOpen(m);
+    if (!b || !Array.isArray(b.list) || !(b.seq > this.bansSeq)) return;
+    this.bansSeq = b.seq;
+    this.bans = new Map(b.list.filter(x => x && typeof x.id === 'string').map(x => [x.id, String(x.name || 'Player').slice(0, 24)]));
     for (const id of this.bans.keys()) delete this.players[id];
     const was = this.banned; this.banned = this.bans.has(this.id);
-    if (this.banned && !was) { this.goDark(); Game.toast('An admin banned you from PvP'); }
-    else if (!this.banned && was) this.announce(true);
+    if (this.banned && !was) this.goDark(); else if (!this.banned && was) this.announce(true);
   },
-  applyAdmin(m) {
-    if (m.op === 'rename' && typeof m.name === 'string' && this.setName(m.name)) Game.toast('An admin changed your duel name to ' + SAVE.pvpName);
-    else if (m.op === 'reset') { SAVE.pvp.wins = 0; SAVE.pvp.losses = 0; persist(); this.announce(true); Game.toast('An admin reset your duel record'); }
-    else if (m.op === 'kick' && !this.kicked) { this.kicked = true; this.goDark(); Game.toast('An admin removed you from PvP'); }
+  /* the account summary the admin sees, kept on the broker even while this player is offline */
+  summary() {
+    return { v: 1, id: this.id, n: this.name(), g: SAVE.gold, c: SAVE.cleared.filter(Boolean).length, o: SAVE.owned.map(x => (x ? 1 : 0)).join(''),
+      u: [SAVE.upg.regen, SAVE.upg.fighter, SAVE.upg.skill, SAVE.upg.final], w: SAVE.pvp.wins, l: SAVE.pvp.losses, b: SAVE.banned ? 1 : 0, as: SAVE.adminSeq || 0, t: Date.now() };
+  },
+  syncAccount() { if (!this.client || this.state !== 'online') return; this.acctT = performance.now(); this.acctDirty = false; this.pub('acct/' + this.id, this.summary(), true, 1); },
+  async onCmd(m) {
+    const c = await adminOpen(m);
+    if (!c || c.id !== this.id || typeof c.seq !== 'number' || !c.set || typeof c.set !== 'object') return;
+    if (c.seq > (SAVE.adminSeq || 0)) this.applyCmd(c);
+  },
+  applyCmd(m) {
+    const s = m.set, wasBanned = !!SAVE.banned, int = (v, a, b) => clamp(Math.floor(Number(v)) || 0, a, b);
+    if (s.wipe) SAVE = Object.assign(defaultSave(), { pvpUid: SAVE.pvpUid, pvpName: SAVE.pvpName, settings: SAVE.settings, banned: SAVE.banned, adminSeq: SAVE.adminSeq });
+    if (typeof s.n === 'string' && cleanName(s.n)) SAVE.pvpName = cleanName(s.n);
+    if ('g' in s) SAVE.gold = int(s.g, 0, 9999999);
+    if ('c' in s) { const n = int(s.c, 0, LEVEL_N); SAVE.cleared = SAVE.cleared.map((_, i) => (i < n ? 1 : 0)); }
+    if (typeof s.o === 'string') { SAVE.owned = SAVE.owned.map((x, i) => (s.o[i] === '1' ? 1 : s.o[i] === '0' ? 0 : x)); if (SAVE.equipped >= 0 && !SAVE.owned[SAVE.equipped]) SAVE.equipped = -1; }
+    if (Array.isArray(s.u)) ['regen', 'fighter', 'skill', 'final'].forEach((k, j) => { if (s.u[j] != null) SAVE.upg[k] = int(s.u[j], 0, j === 3 ? 1 : 5); });
+    if ('w' in s) SAVE.pvp.wins = int(s.w, 0, 99999);
+    if ('l' in s) SAVE.pvp.losses = int(s.l, 0, 99999);
+    if ('b' in s) SAVE.banned = s.b ? 1 : 0;
+    SAVE.adminSeq = m.seq; fixJobs(); persist(); this.syncAccount(); this.announce(true);
+    if (SAVE.banned && !wasBanned) { this.goDark(); setScene(new BannedScreen()); }
+    else if (!SAVE.banned && wasBanned) { setScene(new Home()); Game.toast('An admin lifted the ban on this account'); }
+    else if (s.wipe) { setScene(new Home()); Game.toast('An admin reset this account'); }
+    else Game.toast('An admin updated your account');
+  },
+  pendingFor(id) { const c = this.pending[id], a = this.accounts[id]; return c && (!a || (a.as || 0) < c.seq) ? c : null; },
+  /* (re)subscribing makes the broker resend every stored account summary and change list */
+  adminSubscribe() {
+    if (!this.client || !this.adminKey) return;
+    const c = this.client, t = [PVP_PFX + 'acct/+', PVP_PFX + 'cmd/+'];
+    c.unsubscribe(t, () => { if (this.client === c) c.subscribe(t, { qos: 1 }); });
+  },
+  /* one signed change list per player, kept on the broker until they apply it; new edits merge into an unapplied one */
+  adminSave(id, edits) {
+    if (!this.adminKey || this.state !== 'online') { sfx('error-a'); Game.toast('Not connected to the game server'); return false; }
+    if (id === this.id && edits.b) { sfx('error-a'); Game.toast('You cannot ban your own account'); return false; }
+    const prev = this.pendingFor(id), a = this.accounts[id], set = Object.assign({}, prev ? prev.set : {}, edits);
+    if (prev && prev.set.o && edits.o) set.o = mergeBits(prev.set.o, edits.o);
+    if (prev && prev.set.u && edits.u) set.u = mergeUpg(prev.set.u, edits.u);
+    const data = { id, seq: Math.max(Date.now(), (prev ? prev.seq : 0) + 1, ((a && a.as) || 0) + 1), set };
+    this.pending[id] = data;
+    adminSeal(this.adminKey, data).then(msg => this.pub('cmd/' + id, msg, true, 1));
+    if ('b' in edits) this.setBan(id, set.n || (a && a.n) || 'Player', !!edits.b);
+    return true;
   },
   goDark() {
     if (this.match && this.match.phase !== 'over') this.match.finishDuel('quit');
@@ -186,25 +260,40 @@ const PVP = {
   },
   async tryAdmin(pin) {
     if (!(window.crypto && crypto.subtle)) { Game.toast('Admin needs the https website'); return false; }
-    const k = await sha256hex(String(pin).trim() + PVP_ADMIN_SALT);
-    if (await adminSigned(k)) { this.adminKey = k; this.adminFails = 0; return true; }
+    let key = null;
+    try {
+      const d = b64u(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(pin).trim() + PVP_ADMIN_SALT))));
+      key = await crypto.subtle.importKey('jwk', Object.assign({ d }, PVP_ADMIN_PUB), ECDSA_KEY, false, ['sign']);
+      if (!(await adminOpen(await adminSeal(key, 'probe')))) key = null; // a wrong password makes a key that fails the public check
+    } catch (e) { key = null; }
+    if (key) { this.adminKey = key; this.adminFails = 0; return true; }
     if (++this.adminFails >= 5) { this.adminFails = 0; this.adminLock = Date.now() + 30000; }
     return false;
   },
-  adminOp(id, op, extra = {}) { if (this.adminKey) this.send(id, Object.assign({ t: 'admin', op, k: this.adminKey }, extra)); },
   setBan(id, name, on) {
     if (!this.adminKey || id === this.id) return;
     const next = new Map(this.bans); if (on) next.set(id, name); else next.delete(id);
-    this.bans = next; if (on) delete this.players[id];
-    this.pub('bans', { k: this.adminKey, list: [...next].map(([bid, n]) => ({ id: bid, name: n })) }, true, 1);
+    this.bans = next; this.bansSeq = Math.max(Date.now(), this.bansSeq + 1); if (on) delete this.players[id];
+    adminSeal(this.adminKey, { seq: this.bansSeq, list: [...next].map(([bid, n]) => ({ id: bid, name: n })) }).then(msg => this.pub('bans', msg, true, 1));
   }
 };
 setInterval(() => PVP.tick(), 1000);
-window.addEventListener('pagehide', () => { if (PVP.client) { PVP.pub('p/' + PVP.id, null, true); try { PVP.client.end(); } catch (e) { /* closing */ } } });
+// leaving: say so right away (plain sends go out before the page closes; the socket closes with the page)
+window.addEventListener('pagehide', () => {
+  if (!PVP.client || PVP.state !== 'online') return;
+  PVP.pub('p/' + PVP.id, null, true);
+  PVP.pub('acct/' + PVP.id, Object.assign(PVP.summary(), { off: 1 }), true);
+});
+// back from the browser's page cache: start over with a fresh connection
+window.addEventListener('pageshow', e => {
+  if (!e.persisted || !PVP.client) return;
+  try { PVP.client.end(true); } catch (err) { /* already closed */ }
+  PVP.client = null; PVP.state = 'off'; PVP.start();
+});
 
 /* ---------------- lobby: who is online, challenge them ---------------- */
 class PvpLobby extends MenuScene {
-  constructor() { super(); this.scroll = 0; PVP.start(); }
+  constructor() { super(); this.scroll = 0; PVP.lobbyOn = true; PVP.start(); PVP.announce(true); }
   key(k) { if (k === 'escape') popScene(this); }
   wheel(d) { this.scroll = Math.max(0, this.scroll + d); }
   draw() {
@@ -221,7 +310,7 @@ class PvpLobby extends MenuScene {
     })));
     // small red square in the window corner: the admin door
     const rx = (CW - M.ox) / M.s - 12, ry = -M.oy / M.s + 4;
-    const door = this.hit(rx - 3, ry - 3, 14, 14, () => pushScene(PVP.adminKey ? new PvpAdmin() : adminPinDialog()));
+    const door = this.hit(rx - 3, ry - 3, 14, 14, () => pushScene(PVP.adminKey ? new AdminAccounts() : adminPinDialog()));
     ctx.fillStyle = P.dark; ctx.fillRect(rx, ry, 8, 8); ctx.fillStyle = door ? P.redL : P.red; ctx.fillRect(rx + 1, ry + 1, 6, 6);
     const pill = { online: ['Online', P.teal], loading: ['Connecting', P.yel], connecting: ['Connecting', P.yel], failed: ['Offline', P.lav], blocked: ['Website only', P.lav], off: ['Offline', P.lav] }[st];
     const pw = textW(pill[0], 5.2, 700) + 12;
@@ -231,7 +320,6 @@ class PvpLobby extends MenuScene {
     panel('blue', 30, 72, 400, 148);
     const say = (lines, y0 = 112) => lines.forEach((l, k) => stext(l, 230, y0 + k * 11, k === 0 ? 6.4 : 5.4, P.white, 'center', k === 0 ? 700 : 500));
     if (PVP.banned) say(['You are banned from PvP', 'An admin banned this player for unfair play.']);
-    else if (PVP.kicked) say(['An admin removed you from PvP', 'Reload the game to come back later.']);
     else if (st === 'blocked') say(['Duels need the website version of the game', 'Open ' + PVP_SITE + ' in your browser', 'and press PVP on the level screen.']);
     else if (st === 'loading' || st === 'connecting' || st === 'off') say(['Connecting to the duel server...', 'This takes a few seconds.']);
     else if (st === 'failed') {
@@ -319,53 +407,138 @@ function adminPinDialog() {
       if (await PVP.tryAdmin(v)) { sfx('coin-d', 0.6); Game.toast('Admin tools unlocked'); return true; }
       sfx('error-a'); Game.toast('Wrong password'); return false;
     },
-    after: () => pushScene(new PvpAdmin())
+    after: () => pushScene(new AdminAccounts())
   });
 }
-class PvpAdmin extends MenuScene {
-  constructor() { super(); this.scroll = 0; }
+const isOnline = a => a.id === PVP.id || !!PVP.players[a.id] || (!a.off && Date.now() - (a.t || 0) < 75000); // summaries come every 30 s
+function seenText(a) {
+  if (!a || !a.t) return 'Never seen';
+  if (isOnline(a)) return 'Online now';
+  const mins = Math.floor((Date.now() - a.t) / 60000);
+  return mins < 1 ? 'Just now' : mins < 60 ? `${mins} min ago` : mins < 1440 ? `${Math.floor(mins / 60)} h ago` : `${Math.floor(mins / 1440)} d ago`;
+}
+/* every player who has opened the game, online or not */
+class AdminAccounts extends MenuScene {
+  constructor() { super(); this.page = 0; PVP.adminSubscribe(); }
   key(k) { if (k === 'escape') popScene(this); }
-  wheel(d) { this.scroll = Math.max(0, this.scroll + d); }
+  wheel(d) { this.page = Math.max(0, this.page + d); }
   draw() {
     dim(); this.begin();
-    const x = 14, y = 4, w = 432, h = 250;
+    const x = 14, y = 4, w = 432, h = 250, rows = 8;
     this.hit(x, y, w, h, () => {});
     panel('grey', x, y, w, h);
     ptext('ADMIN', x + w / 2, y + 9, 'B', 'center');
-    if (PVP.state !== 'online') stext('Not connected to the duel server.', x + w / 2, y + 120, 6, P.dark, 'center', 700);
-    // online players
-    stext('Online players', x + 16, y + 34, 6, P.dark, 'left', 700);
-    const list = Object.values(PVP.players).sort((a, b) => a.name.localeCompare(b.name)), rows = 4;
-    this.scroll = Math.min(this.scroll, Math.max(0, list.length - rows));
-    if (!list.length) stext('No one else is online.', x + 16, y + 50, 5.2, P.dark, 'left', 500);
-    list.slice(this.scroll, this.scroll + rows).forEach((pl, k) => {
-      const ry = y + 42 + k * 20, bx = x + w - 16 - 4 * 44;
-      ctx.fillStyle = 'rgba(71,50,75,0.14)'; ctx.fillRect(x + 12, ry, w - 24, 18);
-      stext(fitText(pl.name, 100, 5.6, 700), x + 18, ry + 9, 5.6, P.dark, 'left', 700);
-      stext(`${pl.w} W  ${pl.l} L`, x + 128, ry + 9, 5, P.redD, 'left', 700);
-      stext(PVP_STATUS[pl.st], x + 176, ry + 9, 5, P.dark, 'left', 500);
-      textButton(this, 'red', bx, ry + 1, 40, 16, 'Ban', () => pushScene(new Confirm(`Ban ${pl.name}?`, 'They can no longer use PvP.', 'Ban', () => { PVP.setBan(pl.id, pl.name, true); Game.toast(pl.name + ' is banned'); })));
-      textButton(this, 'grey', bx + 44, ry + 1, 40, 16, 'Kick', () => { PVP.adminOp(pl.id, 'kick'); delete PVP.players[pl.id]; Game.toast(pl.name + ' was removed from PvP'); });
-      textButton(this, 'grey', bx + 88, ry + 1, 40, 16, 'Reset', () => pushScene(new Confirm(`Reset ${pl.name}?`, 'Their duel wins and losses go back to 0.', 'Reset', () => { PVP.adminOp(pl.id, 'reset'); pl.w = 0; pl.l = 0; Game.toast(pl.name + "'s record was reset"); })));
-      textButton(this, 'grey', bx + 132, ry + 1, 40, 16, 'Rename', () => pushScene(new PvpTextDialog({
-        title: 'RENAME', hint: 'New duel name for ' + pl.name, value: pl.name,
-        onSave: v => { const n = cleanName(v); if (!n) { sfx('error-a'); Game.toast('Type a name first'); return false; } PVP.adminOp(pl.id, 'rename', { name: n }); Game.toast(`${pl.name} is now ${n}`); pl.name = n; return true; }
-      })));
+    stext('Every player who has opened the game. Click one to change their account.', x + w / 2, y + 32, 4.8, P.dark, 'center', 500);
+    const list = Object.values(PVP.accounts).sort((a, b) => (b.t || 0) - (a.t || 0));
+    this.page = clamp(this.page, 0, Math.max(0, list.length - rows));
+    const cols = [x + 18, x + 140, x + 214, x + 266, x + 312, x + 366];
+    ['Player', 'Last seen', 'Gold', 'Levels', 'Duels', ''].forEach((c, i) => stext(c, cols[i], y + 44, 4.8, P.dark, 'left', 700));
+    if (PVP.state !== 'online') stext('Not connected to the game server.', x + w / 2, y + 120, 6, P.dark, 'center', 700);
+    else if (!list.length) stext('No players yet. Players show up after they open the new version.', x + w / 2, y + 120, 5.4, P.dark, 'center', 600);
+    list.slice(this.page, this.page + rows).forEach((a, k) => {
+      const ry = y + 52 + k * 19, on = this.hit(x + 12, ry, w - 24, 17, () => pushScene(new AccountEditor(a.id)));
+      ctx.fillStyle = on ? 'rgba(255,255,255,0.4)' : 'rgba(71,50,75,0.12)'; ctx.fillRect(x + 12, ry, w - 24, 17);
+      stext(fitText(String(a.n || 'Player') + (a.id === PVP.id ? ' (you)' : ''), 116, 5.6, 700), cols[0], ry + 8.5, 5.6, P.dark, 'left', 700);
+      stext(seenText(a), cols[1], ry + 8.5, 5, isOnline(a) ? P.tealD : P.dark, 'left', 600);
+      stext(String(a.g || 0), cols[2], ry + 8.5, 5.2, P.dark, 'left', 600);
+      stext(String(a.c || 0), cols[3], ry + 8.5, 5.2, P.dark, 'left', 600);
+      stext(`${a.w || 0}W ${a.l || 0}L`, cols[4], ry + 8.5, 5.2, P.dark, 'left', 600);
+      const tag = a.b ? ['BANNED', P.redD] : PVP.pendingFor(a.id) ? ['Pending', P.yelD] : null;
+      if (tag) stext(tag[0], cols[5], ry + 8.5, 5, tag[1], 'left', 700);
     });
-    if (list.length > rows) stext(`Scroll for more (${list.length} online)`, x + w - 16, y + 34, 4.6, P.dark, 'right', 500);
-    // banned players
-    stext('Banned players', x + 16, y + 132, 6, P.dark, 'left', 700);
-    const bans = [...PVP.bans];
-    if (!bans.length) stext('Nobody is banned.', x + 16, y + 148, 5.2, P.dark, 'left', 500);
-    bans.slice(0, 3).forEach(([id, name], k) => {
-      const ry = y + 140 + k * 20;
-      ctx.fillStyle = 'rgba(71,50,75,0.14)'; ctx.fillRect(x + 12, ry, w - 24, 18);
-      stext(fitText(name, 160, 5.6, 700), x + 18, ry + 9, 5.6, P.dark, 'left', 700);
-      textButton(this, 'grey', x + w - 60, ry + 1, 44, 16, 'Unban', () => { PVP.setBan(id, name, false); Game.toast(name + ' can use PvP again'); });
+    if (list.length > rows) {
+      stext(`${this.page + 1}-${Math.min(list.length, this.page + rows)} of ${list.length}`, x + 70, y + h - 17, 5, P.dark, 'left', 600);
+      textButton(this, 'grey', x + 16, y + h - 28, 48, 21, 'Up', () => { this.page = Math.max(0, this.page - rows); });
+      textButton(this, 'grey', x + w - 64, y + h - 28, 48, 21, 'Down', () => { this.page += rows; });
+    }
+    textButton(this, 'grey', x + w / 2 - 70, y + h - 28, 64, 21, 'Refresh', () => { PVP.adminSubscribe(); Game.toast('Reloading the account list'); });
+    textButton(this, 'grey', x + w / 2 + 6, y + h - 28, 64, 21, 'Done', () => popScene(this));
+    this.end();
+  }
+}
+/* one player's account: changes are signed and wait on the server until that player opens the game */
+class AccountEditor extends MenuScene {
+  constructor(id) { super(); this.id = id; this.edits = {}; }
+  key(k) { if (k === 'escape') popScene(this); }
+  /* what the account will look like: last summary, then the unapplied change list, then the edits on screen */
+  cur() {
+    const a = PVP.accounts[this.id] || {}, pend = PVP.pendingFor(this.id);
+    const v = { n: a.n || 'Player', g: a.g || 0, c: a.c || 0, o: String(a.o || '').padEnd(16, '0').slice(0, 16), u: Array.isArray(a.u) ? a.u.slice(0, 4) : [0, 0, 0, 0], w: a.w || 0, l: a.l || 0, b: a.b || 0, wipe: 0 };
+    for (const s of [pend && pend.set, this.edits]) {
+      if (!s) continue;
+      if (s.wipe) Object.assign(v, { g: 0, c: 0, o: '0'.repeat(16), u: [0, 0, 0, 0], w: 0, l: 0, wipe: 1 });
+      for (const f of ['n', 'g', 'c', 'w', 'l', 'b']) if (f in s) v[f] = s[f];
+      if (typeof s.o === 'string') v.o = mergeBits(v.o, s.o);
+      if (Array.isArray(s.u)) v.u = mergeUpg(v.u, s.u);
+    }
+    return v;
+  }
+  setUpg(j, val) { const u = (this.edits.u || [null, null, null, null]).slice(); u[j] = val; this.edits.u = u; }
+  step(x, y, dec, inc) { textButton(this, 'grey', x, y, 16, 16, '-', dec); textButton(this, 'grey', x + 20, y, 16, 16, '+', inc); }
+  save() {
+    if (!Object.keys(this.edits).length) { Game.toast('Nothing to save'); return; }
+    if (PVP.adminSave(this.id, this.edits)) { this.edits = {}; sfx('coin-d', 0.5); Game.toast('Saved. Offline players get it the next time they open the game.'); }
+  }
+  draw() {
+    dim(); this.begin();
+    const x = 14, y = 4, w = 432, h = 250, v = this.cur(), a = PVP.accounts[this.id] || {}, dirty = Object.keys(this.edits).length > 0;
+    this.hit(x, y, w, h, () => {});
+    panel('grey', x, y, w, h);
+    ptext('ACCOUNT', x + w / 2, y + 9, 'B', 'center');
+    stext(fitText(v.n, 190, 7, 700), x + 16, y + 32, 7, P.dark, 'left', 700);
+    const status = dirty ? 'Unsaved changes' : PVP.pendingFor(this.id) ? 'Waiting for this player to open the game' : 'Up to date';
+    stext(`${seenText(a)}. ${status}`, x + w - 16, y + 32, 5, dirty ? P.redD : P.dark, 'right', 600);
+    // left column: name, gold, levels, duel record, weapons
+    const L = x + 16, row = (yy, label, value) => { stext(label, L, yy, 5.4, P.dark, 'left', 500); stext(String(value), L + 74, yy, 6, P.dark, 'left', 700); };
+    row(y + 50, 'Name', fitText(v.n, 80, 6, 700));
+    textButton(this, 'grey', L + 160, y + 42, 50, 16, 'Rename', () => pushScene(new PvpTextDialog({
+      title: 'RENAME', hint: 'New name for this player', value: v.n,
+      onSave: t => { const n = cleanName(t); if (!n) { sfx('error-a'); Game.toast('Type a name first'); return false; } this.edits.n = n; return true; }
+    })));
+    row(y + 70, 'Gold', v.g);
+    textButton(this, 'grey', L + 160, y + 62, 50, 16, 'Set', () => pushScene(new PvpTextDialog({
+      title: 'GOLD', hint: 'How much gold this player should have', value: String(v.g), maxLen: 7,
+      onSave: t => { const g = Math.floor(Number(t)); if (!(g >= 0)) { sfx('error-a'); Game.toast('Type a number'); return false; } this.edits.g = g; return true; }
+    })));
+    row(y + 90, 'Levels cleared', `${v.c} / ${LEVEL_N}`);
+    this.step(L + 160, y + 82, () => { this.edits.c = Math.max(0, this.cur().c - 1); }, () => { this.edits.c = Math.min(LEVEL_N, this.cur().c + 1); });
+    row(y + 110, 'Duel record', `${v.w} won, ${v.l} lost`);
+    textButton(this, 'grey', L + 160, y + 102, 50, 16, 'Reset', () => { this.edits.w = 0; this.edits.l = 0; });
+    stext('Weapons (click to give or take away)', L, y + 128, 5.4, P.dark, 'left', 500);
+    for (let i = 0; i < WEAPONS.length; i++) {
+      const wx = L + (i % 8) * 26, wy = y + 132 + Math.floor(i / 8) * 24, own = v.o[i] === '1';
+      const on = this.hit(wx, wy + 3, 24, 18, () => { const o = (this.edits.o || '.'.repeat(16)).split(''); o[i] = this.cur().o[i] === '1' ? '0' : '1'; this.edits.o = o.join(''); }, [WEAPONS[i].name, own ? 'Owned. Click to take it away.' : 'Not owned. Click to give it.']);
+      ctx.fillStyle = on ? 'rgba(255,255,255,0.75)' : own ? 'rgba(255,255,255,0.4)' : 'rgba(71,50,75,0.12)'; ctx.fillRect(wx, wy + 3, 24, 18);
+      spr('weapons', WEAPONS[i].tile, wx, wy, own ? null : { alpha: 0.3 });
+    }
+    // right column: upgrades, ban, wipe
+    const Rx = x + 252;
+    stext('Upgrades', Rx, y + 50, 5.8, P.dark, 'left', 700);
+    ['Regen', 'Fighter', 'Skill'].forEach((nm, j) => {
+      const yy = y + 68 + j * 18;
+      stext(nm, Rx, yy, 5.4, P.dark, 'left', 500);
+      stext(`${v.u[j] || 0} / 5`, Rx + 70, yy, 5.8, P.dark, 'left', 700);
+      this.step(Rx + 112, yy - 8, () => this.setUpg(j, Math.max(0, (this.cur().u[j] || 0) - 1)), () => this.setUpg(j, Math.min(5, (this.cur().u[j] || 0) + 1)));
     });
-    if (bans.length > 3) stext(`and ${bans.length - 3} more`, x + 16, y + 206, 4.8, P.dark, 'left', 500);
-    stext('These tools only reach players using the official game.', x + w / 2, y + 214, 4.6, P.dark, 'center', 500);
-    textButton(this, 'grey', x + w / 2 - 32, y + h - 28, 64, 21, 'Done', () => popScene(this));
+    stext('Death zone', Rx, y + 122, 5.4, P.dark, 'left', 500);
+    textButton(this, v.u[3] ? 'red' : 'grey', Rx + 70, y + 114, 50, 16, v.u[3] ? 'Owned' : 'No', () => this.setUpg(3, this.cur().u[3] ? 0 : 1));
+    textButton(this, v.b ? 'grey' : 'red', Rx, y + 142, 88, 18, v.b ? 'Unban account' : 'Ban account', () => { this.edits.b = this.cur().b ? 0 : 1; });
+    if (v.b) stext('BANNED', Rx + 96, y + 151, 6, P.redD, 'left', 700);
+    textButton(this, 'red', Rx, y + 166, 88, 18, 'Wipe account', () => pushScene(new Confirm('Wipe this account?', 'Gold, weapons, levels, upgrades and duels reset.', 'Wipe', () => { this.edits = { wipe: 1 }; })));
+    if (v.wipe) stext('Wipe waiting', Rx + 96, y + 175, 5.4, P.redD, 'left', 700);
+    stext('Saved changes reach offline players the next time they open the game.', x + w / 2, y + 206, 4.8, P.dark, 'center', 500);
+    textButton(this, 'red', x + w / 2 - 92, y + h - 30, 86, 21, 'Save changes', () => this.save());
+    textButton(this, 'grey', x + w / 2 + 6, y + h - 30, 86, 21, dirty ? 'Discard' : 'Back', () => popScene(this));
+    this.end();
+  }
+}
+/* what a banned account sees instead of the game */
+class BannedScreen extends MenuScene {
+  draw() {
+    sandBg(); this.begin();
+    panel('red', 140, 78, 180, 36); ptext('BANNED', 230, 90, 'B', 'center');
+    stext('An admin banned this account.', 230, 134, 7, P.dark, 'center', 700);
+    stext('This browser can no longer play Dustwell Shooter.', 230, 148, 5.6, P.dark, 'center', 500);
     this.end();
   }
 }

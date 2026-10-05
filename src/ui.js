@@ -390,7 +390,7 @@ class Options extends MenuScene {
     });
     const yy = row(5, 'Reset progress');
     textButton(this, this.confirmT > 0 ? 'red' : 'grey', x + 120, yy - 3, 70, 19, this.confirmT > 0 ? 'Confirm wipe' : 'Reset', () => {
-      if (this.confirmT > 0) { const s = SAVE.settings; SAVE = defaultSave(); SAVE.settings = s; persist(); this.confirmT = 0; Game.toast('Progress reset. Welcome back to Dustwell.'); }
+      if (this.confirmT > 0) { const keep = { settings: SAVE.settings, pvpUid: SAVE.pvpUid, pvpName: SAVE.pvpName, pvp: SAVE.pvp, adminSeq: SAVE.adminSeq }; SAVE = Object.assign(defaultSave(), keep); persist(); this.confirmT = 0; Game.toast('Progress reset. Welcome back to Dustwell.'); }
       else this.confirmT = 3;
     });
     if (this.confirmT > 0) stext('Click again to erase gold, weapons and levels', x + 196, yy + 7, 4.4, P.redD, 'left', 600);
