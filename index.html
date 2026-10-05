@@ -459,9 +459,9 @@ const UPGRADES = [
     info: l => (l ? `Every ${skillEvery(l)} s the toughest monster turns yellow and vanishes, gunners first. Not bosses.` : 'Makes the toughest monster vanish, gunners first. Not bosses.'),
     step: i => (i === 0 ? 'Every 10 s the toughest monster vanishes, gunners first' : `Every ${skillEvery(i + 1)} s instead of ${skillEvery(i)} s`) }
 ];
-/* final upgrade, unlocked once all three tracks are maxed. Price continues the ladder (30..80, then 90) doubled. */
+/* final upgrade, unlocked once all three tracks are maxed */
 const FINAL_UPG = {
-  key: 'final', name: 'The Death zone', price: 180,
+  key: 'final', name: 'The Death zone', price: 400,
   info: 'Green AK-47 fire from your body at 2x damage, plus 1 damage/s to monsters in pistol range.',
   ready: () => UPGRADES.every(u => SAVE.upg[u.key] >= 5)
 };
@@ -499,7 +499,7 @@ const THEMES = [
   { tP: 3, tT: 3, bld: 1, plz: 1, yard: 1, pP: 3, pT: 3, pD: 3, cac: 10, rock: 8, bone: 3, tree: 4 },
   { tP: 3, tT: 2, bld: 3, plz: 2, yard: 2, pP: 2, pT: 2, pD: 4, cac: 8, rock: 10, bone: 4, tree: 3 }
 ];
-const EARLY_POOLS = [['slime'], ['slime'], ['slime', 'bat'], ['slime', 'bat'], ['slime', 'bat'], ['slime', 'bat', 'imp'], ['bat', 'imp', 'slime'], ['imp', 'slime', 'bat'], ['imp', 'bat', 'hound'], ['imp', 'bat', 'hound'], ['hound', 'imp', 'slime'], ['hound', 'imp', 'bat'], ['hound', 'raider', 'bat'], ['raider', 'hound', 'imp'], ['raider', 'hound'], ['raider', 'imp', 'bat', 'hound'], ['raider', 'hound', 'slime', 'imp'], ['raider', 'hound', 'imp'], ['raider', 'hound', 'imp', 'bat'], ['raider', 'hound', 'imp']];
+const EARLY_POOLS = [['slime'], ['slime'], ['slime', 'bat'], ['slime', 'bat'], ['slime', 'bat'], ['slime', 'bat', 'imp'], ['bat', 'imp', 'slime'], ['imp', 'slime', 'bat'], ['imp', 'bat', 'slime'], ['imp', 'bat', 'hound'], ['hound', 'imp', 'slime'], ['hound', 'imp', 'bat'], ['hound', 'raider', 'bat'], ['raider', 'hound', 'imp'], ['raider', 'hound'], ['raider', 'imp', 'bat', 'hound'], ['raider', 'hound', 'slime', 'imp'], ['raider', 'hound', 'imp'], ['raider', 'hound', 'imp', 'bat'], ['raider', 'hound', 'imp']];
 const LEVEL_NAMES = ['Dusty Outskirts', 'Cactus Flats', 'Lavender Mesa', 'Old Scrapyard', 'Slime Hollow', 'Teal Oasis', 'Canyon Crossing', 'Rusty Outpost', 'Violet Badlands', 'Ember Ridge', 'Golden Dunes', 'Bandit Camp', 'Twin Plateaus', 'Chain-Link Maze', 'Tyrant\u2019s Throne'];
 const LEVELS = LEVEL_NAMES.map((name, i) => {
   const L = i + 1, src = i === LEVEL_N - 1 ? THEMES.length - 1 : i; // the last level uses the final arena's theme and monsters
@@ -507,7 +507,7 @@ const LEVELS = LEVEL_NAMES.map((name, i) => {
 });
 /* gun-holding monsters (hounds, raiders) fire one bullet at a time and carry a better gun later on */
 const ENEMY_GUNS = [
-  { tile: 10, cd: 4, speed: 160, range: 120 }, // Levels 1-10: green pistol, at most one shot every 4 s
+  { tile: 10, cd: 4, speed: 160, range: 120 }, // Level 10: green pistol (short gun), at most one shot every 4 s. Levels 1-9 have no gunners.
   { tile: 11, cd: 4, speed: 200, range: 150 }, // Levels 11-13: green long pistol, longer reach
   { tile: 12, cd: 2, speed: 190, range: 140 }  // Levels 14-15: green blaster (third stage), one shot every 2 s
 ];
