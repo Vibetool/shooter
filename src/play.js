@@ -23,7 +23,8 @@ class Play {
     this.cam = { x: 0, y: 0 }; this.shake = 0;
     this.flow = new Int16Array(m.W * m.H); this.flowT = 0; this.flowCell = -1; this.q = new Int32Array(m.W * m.H);
     this.portal = null;
-    this.upg = { regen: SAVE.upg.regen, fighter: SAVE.upg.fighter, skill: SAVE.upg.skill };
+    this.upg = { regen: SAVE.upg.regen, fighter: SAVE.upg.fighter, skill: SAVE.upg.skill, final: SAVE.upg.final };
+    this.dz = { ammo: WEAPONS[ORANGE_N + 5].mag, reload: 0, cd: 0.5, aura: 0 };
     this.regenT = 0; this.skillT = 0; this.shieldT = 0; this.ally = null;
     this.banner = { lines: ['LEVEL ' + this.L], sub: this.def.name, t: 2.2, kind: 'red' };
     this.paused = false; this.result = null; this.hot = []; this.saveT = 0;
@@ -211,6 +212,7 @@ class Play {
       }
     }
     if (u.fighter) { if (!this.ally) this.spawnAlly(); this.updAlly(dt); }
+    if (u.final) this.deathZone(dt);
     if (p.shield < p.maxShield) {
       if ((this.shieldT += dt) >= this.shieldEvery()) { this.shieldT = 0; p.shield = p.maxShield; this.spark(p.x, p.y - 8, 10, P.blueL); sfx('select-a', 0.6, 1.3); }
     } else this.shieldT = 0;
@@ -220,6 +222,34 @@ class Play {
       for (const e of gunners.length ? gunners : pool) if (!best || e.hp > best.hp) best = e;
       if (best) { best.zap = 0.6; this.skillT = 0; sfx('select-a', 0.7, 0.7); }
     }
+  }
+  /* The Death zone: green AK-47 bullets fly out of the hero's body at twice their damage,
+     and every monster within pistol range loses 1 health each second */
+  deathZone(dt) {
+    const p = this.p, ak = WEAPONS[ORANGE_N + 5], z = this.dz;
+    if ((z.aura += dt) >= 1) {
+      z.aura -= 1;
+      const r = WEAPONS[0].speed * WEAPONS[0].life;
+      for (const e of this.ents) {
+        if (e.dead || e.zap > 0 || Math.hypot(e.x - p.x, e.y - p.y) > r) continue;
+        this.spark(e.x, e.y - 8 * e.scale, 3, P.purp); this.damage(e, 1, -7, 0, 0);
+      }
+    }
+    if (z.reload > 0) { if ((z.reload -= dt) <= 0) z.ammo = ak.mag; return; }
+    if ((z.cd -= dt) > 0) return;
+    const ox = p.x, oy = p.y - 7;
+    let best = null, bd = ak.speed * ak.life - 10;
+    for (const e of this.ents) {
+      if (e.dead || e.zap > 0) continue;
+      const tx = e.x, ty = e.y - 7 * e.scale, d = Math.hypot(tx - ox, ty - oy);
+      if (d < bd && this.los(ox, oy, tx, ty)) { bd = d; best = e; }
+    }
+    if (!best) { z.cd = 0; return; }
+    const a = Math.atan2(best.y - 7 * best.scale - oy, best.x - ox) + (R() - 0.5) * ak.spread * Math.PI / 180;
+    this.bullets.push({ x: ox, y: oy, vx: Math.cos(a) * ak.speed, vy: Math.sin(a) * ak.speed, life: ak.life, dmg: ak.dmg * 2 * dmgMul(), kind: ak.kind, pierce: 0, splash: 0, hit: [], wi: -6 });
+    sfx(ak.sfx, 0.3, 1.05, 0.03);
+    z.cd = 1 / ak.rate;
+    if (--z.ammo <= 0) z.reload = ak.reload;
   }
   /* the shield comes back on its own: 8 s, or as fast as the Regen upgrade heals */
   shieldEvery() { return this.upg.regen ? regenEvery(this.upg.regen) : 8; }

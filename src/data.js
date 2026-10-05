@@ -37,6 +37,12 @@ const UPGRADES = [
     info: l => (l ? `Every ${skillEvery(l)} s the toughest monster turns yellow and vanishes, gunners first. Not bosses.` : 'Makes the toughest monster vanish, gunners first. Not bosses.'),
     step: i => (i === 0 ? 'Every 10 s the toughest monster vanishes, gunners first' : `Every ${skillEvery(i + 1)} s instead of ${skillEvery(i)} s`) }
 ];
+/* final upgrade, unlocked once all three tracks are maxed. Price continues the ladder (30..80, then 90) doubled. */
+const FINAL_UPG = {
+  key: 'final', name: 'The Death zone', price: 180,
+  info: 'Green AK-47 fire from your body at 2x damage, plus 1 damage/s to monsters in pistol range.',
+  ready: () => UPGRADES.every(u => SAVE.upg[u.key] >= 5)
+};
 const KNIFE = { name: 'Knife', tile: 8, dmg: 2.5, rate: 2.5, range: 26, autoCd: 2 }; // autoCd: seconds between automatic strikes
 
 const MONSTERS = {

@@ -329,7 +329,7 @@ function defaultSave() {
     cleared: new Array(LEVEL_N).fill(0), best: new Array(LEVEL_N).fill(0),
     stats: { kills: 0, goldEarned: 0, goldSpent: 0, chests: 0, deaths: 0, quests: 0, bosses: 0, playTime: 0, runs: 0 },
     npcs: { cat: { next: now, quest: null, count: 0 }, mouse: { next: now + STAGGER_MS, quest: null, count: 0 } }, lastJobAt: 0,
-    upg: { regen: 0, fighter: 0, skill: 0 },
+    upg: { regen: 0, fighter: 0, skill: 0, final: 0 },
     settings: { sfx: 0.8, music: 0.45, shake: 1, nums: 1 }
   };
 }

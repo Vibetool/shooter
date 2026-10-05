@@ -361,7 +361,7 @@ function defaultSave() {
     cleared: new Array(LEVEL_N).fill(0), best: new Array(LEVEL_N).fill(0),
     stats: { kills: 0, goldEarned: 0, goldSpent: 0, chests: 0, deaths: 0, quests: 0, bosses: 0, playTime: 0, runs: 0 },
     npcs: { cat: { next: now, quest: null, count: 0 }, mouse: { next: now + STAGGER_MS, quest: null, count: 0 } }, lastJobAt: 0,
-    upg: { regen: 0, fighter: 0, skill: 0 },
+    upg: { regen: 0, fighter: 0, skill: 0, final: 0 },
     settings: { sfx: 0.8, music: 0.45, shake: 1, nums: 1 }
   };
 }
@@ -459,6 +459,12 @@ const UPGRADES = [
     info: l => (l ? `Every ${skillEvery(l)} s the toughest monster turns yellow and vanishes, gunners first. Not bosses.` : 'Makes the toughest monster vanish, gunners first. Not bosses.'),
     step: i => (i === 0 ? 'Every 10 s the toughest monster vanishes, gunners first' : `Every ${skillEvery(i + 1)} s instead of ${skillEvery(i)} s`) }
 ];
+/* final upgrade, unlocked once all three tracks are maxed. Price continues the ladder (30..80, then 90) doubled. */
+const FINAL_UPG = {
+  key: 'final', name: 'The Death zone', price: 180,
+  info: 'Green AK-47 fire from your body at 2x damage, plus 1 damage/s to monsters in pistol range.',
+  ready: () => UPGRADES.every(u => SAVE.upg[u.key] >= 5)
+};
 const KNIFE = { name: 'Knife', tile: 8, dmg: 2.5, rate: 2.5, range: 26, autoCd: 2 }; // autoCd: seconds between automatic strikes
 
 const MONSTERS = {
@@ -1241,19 +1247,29 @@ function upgradeClick(u, i) {
   }));
 }
 
-/* ---------------- UPGRADE menu (red banner panel, three tracks) ---------------- */
+function finalUpgradeClick() {
+  const F = FINAL_UPG;
+  if (SAVE.upg.final) { Game.toast(F.name + ' is already yours'); return; }
+  if (!F.ready()) { sfx('error-a'); Game.toast('Max out Regen, Fighter and Skill first'); return; }
+  if (SAVE.gold < F.price) { sfx('error-a'); Game.toast(`${F.name} costs ${F.price} gold. You have ${SAVE.gold}.`); return; }
+  pushScene(new Confirm('Buy ' + F.name + '?', `${F.price} gold. You have ${SAVE.gold}.`, 'Buy', () => {
+    SAVE.gold -= F.price; SAVE.stats.goldSpent += F.price; SAVE.upg.final = 1; persist();
+    sfx('coin-d'); sfx('explosion-a', 0.4, 0.8); Game.toast(F.name + ' is yours');
+  }));
+}
+/* ---------------- UPGRADE menu (red banner panel, three tracks + the final upgrade) ---------------- */
 class UpgradeMenu extends MenuScene {
   key(k) { if (k === 'escape') popScene(this); }
   outside() { popScene(this); }
   draw() {
     dim(); this.begin();
-    const x = 36, y = 18, w = 388, h = 222;
+    const x = 36, y = 4, w = 388, h = 250;
     this.hit(x, y, w, h, () => {});
     panel('red', x, y, w, h);
     ptext('UPGRADE', x + w / 2, y + 10, 'B', 'center');
     spr('tiles', 225, x + w - 70, y + 9); ptext(String(SAVE.gold), x + w - 55, y + 10, 'A');
     UPGRADES.forEach((u, r) => {
-      const lvl = SAVE.upg[u.key], y0 = y + 32 + r * 52;
+      const lvl = SAVE.upg[u.key], y0 = y + 30 + r * 48;
       if (u.icon[0] === 'players') spr('players', u.icon[1], x + 10, y0 - 1); else spr(u.icon[0], u.icon[1], x + 14, y0 + 4);
       stext(u.name, x + 40, y0 + 8, 7, P.white, 'left', 700);
       stext(lvl ? `Level ${lvl} / 5` : 'Not bought', x + 40, y0 + 18, 4.8, P.yelL, 'left', 600);
@@ -1272,7 +1288,19 @@ class UpgradeMenu extends MenuScene {
       bar(x + 118, y0 + 28, 254, 9, lvl / 5, 'yellow', 5);
       stext(u.info(lvl), x + 118, y0 + 43, 4.8, P.white, 'left', 500);
     });
-    textButton(this, 'grey', x + w / 2 - 32, y + h - 30, 64, 21, 'Done', () => popScene(this));
+    // final upgrade
+    const F = FINAL_UPG, fy = y + 182, ready = F.ready(), own = SAVE.upg.final;
+    spr('weapons', WEAPONS[ORANGE_N + 5].tile, x + 8, fy - 1);
+    stext(F.name, x + 40, fy + 8, 6.2, P.white, 'left', 700);
+    stext(own ? 'Owned' : ready ? 'Unlocked' : 'Locked', x + 40, fy + 18, 4.8, P.yelL, 'left', 600);
+    const fon = this.hit(x + 118, fy, 254, 24, finalUpgradeClick, [F.name, F.info, own ? 'Owned' : ready ? `${F.price} gold` + (SAVE.gold >= F.price ? '. Click to buy.' : ` (you have ${SAVE.gold})`) : 'Max out Regen, Fighter and Skill first.']);
+    const fny = fy - (fon && ready && !own ? 1 : 0);
+    ctx.globalAlpha = own || ready ? 1 : 0.5;
+    btn('grey', x + 118, fny, 254, 24);
+    stext(own ? 'Owned' : ready ? `Buy for ${F.price} gold` : 'Max out all three tracks to unlock', x + 245, fny + 11.5, 5.4, own ? P.redD : P.dark, 'center', 700);
+    ctx.globalAlpha = 1;
+    stext(F.info, x + 118, fy + 31, 4.8, P.white, 'left', 500);
+    textButton(this, 'grey', x + w / 2 - 32, y + h - 28, 64, 21, 'Done', () => popScene(this));
     this.end();
   }
 }
@@ -1424,7 +1452,7 @@ class Credits extends MenuScene {
     }
     // job tiers
     stext('Job difficulty', x + 16, y + 148, 6.4, P.dark, 'left', 700);
-    stext('Upgrades: ' + UPGRADES.map(u => `${u.name} ${SAVE.upg[u.key]}/5`).join(', '), x + w - 16, y + 148, 5.4, P.dark, 'right', 600);
+    stext('Upgrades: ' + UPGRADES.map(u => `${u.name} ${SAVE.upg[u.key]}/5`).join(', ') + (SAVE.upg.final ? ', Death zone' : ''), x + w - 16, y + 148, 5.4, P.dark, 'right', 600);
     ['cat', 'mouse'].forEach((id, k) => {
       const n = SAVE.npcs[id], tier = Math.min(n.count, MAX_TIER);
       stext(`${NPCS[id].name} ${NPCS[id].title}`, x + 16, y + 160 + k * 14, 5.4, P.dark, 'left', 600);
@@ -1527,7 +1555,8 @@ class Play {
     this.cam = { x: 0, y: 0 }; this.shake = 0;
     this.flow = new Int16Array(m.W * m.H); this.flowT = 0; this.flowCell = -1; this.q = new Int32Array(m.W * m.H);
     this.portal = null;
-    this.upg = { regen: SAVE.upg.regen, fighter: SAVE.upg.fighter, skill: SAVE.upg.skill };
+    this.upg = { regen: SAVE.upg.regen, fighter: SAVE.upg.fighter, skill: SAVE.upg.skill, final: SAVE.upg.final };
+    this.dz = { ammo: WEAPONS[ORANGE_N + 5].mag, reload: 0, cd: 0.5, aura: 0 };
     this.regenT = 0; this.skillT = 0; this.shieldT = 0; this.ally = null;
     this.banner = { lines: ['LEVEL ' + this.L], sub: this.def.name, t: 2.2, kind: 'red' };
     this.paused = false; this.result = null; this.hot = []; this.saveT = 0;
@@ -1715,6 +1744,7 @@ class Play {
       }
     }
     if (u.fighter) { if (!this.ally) this.spawnAlly(); this.updAlly(dt); }
+    if (u.final) this.deathZone(dt);
     if (p.shield < p.maxShield) {
       if ((this.shieldT += dt) >= this.shieldEvery()) { this.shieldT = 0; p.shield = p.maxShield; this.spark(p.x, p.y - 8, 10, P.blueL); sfx('select-a', 0.6, 1.3); }
     } else this.shieldT = 0;
@@ -1724,6 +1754,34 @@ class Play {
       for (const e of gunners.length ? gunners : pool) if (!best || e.hp > best.hp) best = e;
       if (best) { best.zap = 0.6; this.skillT = 0; sfx('select-a', 0.7, 0.7); }
     }
+  }
+  /* The Death zone: green AK-47 bullets fly out of the hero's body at twice their damage,
+     and every monster within pistol range loses 1 health each second */
+  deathZone(dt) {
+    const p = this.p, ak = WEAPONS[ORANGE_N + 5], z = this.dz;
+    if ((z.aura += dt) >= 1) {
+      z.aura -= 1;
+      const r = WEAPONS[0].speed * WEAPONS[0].life;
+      for (const e of this.ents) {
+        if (e.dead || e.zap > 0 || Math.hypot(e.x - p.x, e.y - p.y) > r) continue;
+        this.spark(e.x, e.y - 8 * e.scale, 3, P.purp); this.damage(e, 1, -7, 0, 0);
+      }
+    }
+    if (z.reload > 0) { if ((z.reload -= dt) <= 0) z.ammo = ak.mag; return; }
+    if ((z.cd -= dt) > 0) return;
+    const ox = p.x, oy = p.y - 7;
+    let best = null, bd = ak.speed * ak.life - 10;
+    for (const e of this.ents) {
+      if (e.dead || e.zap > 0) continue;
+      const tx = e.x, ty = e.y - 7 * e.scale, d = Math.hypot(tx - ox, ty - oy);
+      if (d < bd && this.los(ox, oy, tx, ty)) { bd = d; best = e; }
+    }
+    if (!best) { z.cd = 0; return; }
+    const a = Math.atan2(best.y - 7 * best.scale - oy, best.x - ox) + (R() - 0.5) * ak.spread * Math.PI / 180;
+    this.bullets.push({ x: ox, y: oy, vx: Math.cos(a) * ak.speed, vy: Math.sin(a) * ak.speed, life: ak.life, dmg: ak.dmg * 2 * dmgMul(), kind: ak.kind, pierce: 0, splash: 0, hit: [], wi: -6 });
+    sfx(ak.sfx, 0.3, 1.05, 0.03);
+    z.cd = 1 / ak.rate;
+    if (--z.ammo <= 0) z.reload = ak.reload;
   }
   /* the shield comes back on its own: 8 s, or as fast as the Regen upgrade heals */
   shieldEvery() { return this.upg.regen ? regenEvery(this.upg.regen) : 8; }

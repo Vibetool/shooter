@@ -230,19 +230,29 @@ function upgradeClick(u, i) {
   }));
 }
 
-/* ---------------- UPGRADE menu (red banner panel, three tracks) ---------------- */
+function finalUpgradeClick() {
+  const F = FINAL_UPG;
+  if (SAVE.upg.final) { Game.toast(F.name + ' is already yours'); return; }
+  if (!F.ready()) { sfx('error-a'); Game.toast('Max out Regen, Fighter and Skill first'); return; }
+  if (SAVE.gold < F.price) { sfx('error-a'); Game.toast(`${F.name} costs ${F.price} gold. You have ${SAVE.gold}.`); return; }
+  pushScene(new Confirm('Buy ' + F.name + '?', `${F.price} gold. You have ${SAVE.gold}.`, 'Buy', () => {
+    SAVE.gold -= F.price; SAVE.stats.goldSpent += F.price; SAVE.upg.final = 1; persist();
+    sfx('coin-d'); sfx('explosion-a', 0.4, 0.8); Game.toast(F.name + ' is yours');
+  }));
+}
+/* ---------------- UPGRADE menu (red banner panel, three tracks + the final upgrade) ---------------- */
 class UpgradeMenu extends MenuScene {
   key(k) { if (k === 'escape') popScene(this); }
   outside() { popScene(this); }
   draw() {
     dim(); this.begin();
-    const x = 36, y = 18, w = 388, h = 222;
+    const x = 36, y = 4, w = 388, h = 250;
     this.hit(x, y, w, h, () => {});
     panel('red', x, y, w, h);
     ptext('UPGRADE', x + w / 2, y + 10, 'B', 'center');
     spr('tiles', 225, x + w - 70, y + 9); ptext(String(SAVE.gold), x + w - 55, y + 10, 'A');
     UPGRADES.forEach((u, r) => {
-      const lvl = SAVE.upg[u.key], y0 = y + 32 + r * 52;
+      const lvl = SAVE.upg[u.key], y0 = y + 30 + r * 48;
       if (u.icon[0] === 'players') spr('players', u.icon[1], x + 10, y0 - 1); else spr(u.icon[0], u.icon[1], x + 14, y0 + 4);
       stext(u.name, x + 40, y0 + 8, 7, P.white, 'left', 700);
       stext(lvl ? `Level ${lvl} / 5` : 'Not bought', x + 40, y0 + 18, 4.8, P.yelL, 'left', 600);
@@ -261,7 +271,19 @@ class UpgradeMenu extends MenuScene {
       bar(x + 118, y0 + 28, 254, 9, lvl / 5, 'yellow', 5);
       stext(u.info(lvl), x + 118, y0 + 43, 4.8, P.white, 'left', 500);
     });
-    textButton(this, 'grey', x + w / 2 - 32, y + h - 30, 64, 21, 'Done', () => popScene(this));
+    // final upgrade
+    const F = FINAL_UPG, fy = y + 182, ready = F.ready(), own = SAVE.upg.final;
+    spr('weapons', WEAPONS[ORANGE_N + 5].tile, x + 8, fy - 1);
+    stext(F.name, x + 40, fy + 8, 6.2, P.white, 'left', 700);
+    stext(own ? 'Owned' : ready ? 'Unlocked' : 'Locked', x + 40, fy + 18, 4.8, P.yelL, 'left', 600);
+    const fon = this.hit(x + 118, fy, 254, 24, finalUpgradeClick, [F.name, F.info, own ? 'Owned' : ready ? `${F.price} gold` + (SAVE.gold >= F.price ? '. Click to buy.' : ` (you have ${SAVE.gold})`) : 'Max out Regen, Fighter and Skill first.']);
+    const fny = fy - (fon && ready && !own ? 1 : 0);
+    ctx.globalAlpha = own || ready ? 1 : 0.5;
+    btn('grey', x + 118, fny, 254, 24);
+    stext(own ? 'Owned' : ready ? `Buy for ${F.price} gold` : 'Max out all three tracks to unlock', x + 245, fny + 11.5, 5.4, own ? P.redD : P.dark, 'center', 700);
+    ctx.globalAlpha = 1;
+    stext(F.info, x + 118, fy + 31, 4.8, P.white, 'left', 500);
+    textButton(this, 'grey', x + w / 2 - 32, y + h - 28, 64, 21, 'Done', () => popScene(this));
     this.end();
   }
 }
@@ -413,7 +435,7 @@ class Credits extends MenuScene {
     }
     // job tiers
     stext('Job difficulty', x + 16, y + 148, 6.4, P.dark, 'left', 700);
-    stext('Upgrades: ' + UPGRADES.map(u => `${u.name} ${SAVE.upg[u.key]}/5`).join(', '), x + w - 16, y + 148, 5.4, P.dark, 'right', 600);
+    stext('Upgrades: ' + UPGRADES.map(u => `${u.name} ${SAVE.upg[u.key]}/5`).join(', ') + (SAVE.upg.final ? ', Death zone' : ''), x + w - 16, y + 148, 5.4, P.dark, 'right', 600);
     ['cat', 'mouse'].forEach((id, k) => {
       const n = SAVE.npcs[id], tier = Math.min(n.count, MAX_TIER);
       stext(`${NPCS[id].name} ${NPCS[id].title}`, x + 16, y + 160 + k * 14, 5.4, P.dark, 'left', 600);
