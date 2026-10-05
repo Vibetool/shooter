@@ -24,7 +24,7 @@ class Play {
     this.flow = new Int16Array(m.W * m.H); this.flowT = 0; this.flowCell = -1; this.q = new Int32Array(m.W * m.H);
     this.portal = null;
     this.upg = { regen: SAVE.upg.regen, fighter: SAVE.upg.fighter, skill: SAVE.upg.skill, final: SAVE.upg.final };
-    this.dz = { ammo: WEAPONS[ORANGE_N + 5].mag, reload: 0, cd: 0.5, aura: 0 };
+    this.dz = { ammo: WEAPONS[5].mag, reload: 0, cd: 0.5, aura: 0 };
     this.regenT = 0; this.skillT = 0; this.shieldT = 0; this.ally = null;
     this.banner = { lines: ['LEVEL ' + this.L], sub: this.def.name, t: 2.2, kind: 'red' };
     this.paused = false; this.result = null; this.hot = []; this.saveT = 0;
@@ -223,10 +223,10 @@ class Play {
       if (best) { best.zap = 0.6; this.skillT = 0; sfx('select-a', 0.7, 0.7); }
     }
   }
-  /* The Death zone: green AK-47 bullets fly out of the hero's body at twice their damage,
+  /* The Death zone: AK-47 bullets fly out of the hero's body with the orange AK-47's damage,
      and every monster within pistol range loses 1 health each second */
   deathZone(dt) {
-    const p = this.p, ak = WEAPONS[ORANGE_N + 5], z = this.dz;
+    const p = this.p, ak = WEAPONS[5], z = this.dz;
     if ((z.aura += dt) >= 1) {
       z.aura -= 1;
       const r = WEAPONS[0].speed * WEAPONS[0].life;
@@ -246,7 +246,7 @@ class Play {
     }
     if (!best) { z.cd = 0; return; }
     const a = Math.atan2(best.y - 7 * best.scale - oy, best.x - ox) + (R() - 0.5) * ak.spread * Math.PI / 180;
-    this.bullets.push({ x: ox, y: oy, vx: Math.cos(a) * ak.speed, vy: Math.sin(a) * ak.speed, life: ak.life, dmg: ak.dmg * 2 * dmgMul(), kind: ak.kind, pierce: 0, splash: 0, hit: [], wi: -6 });
+    this.bullets.push({ x: ox, y: oy, vx: Math.cos(a) * ak.speed, vy: Math.sin(a) * ak.speed, life: ak.life, dmg: ak.dmg * dmgMul(), kind: ak.kind, pierce: 0, splash: 0, hit: [], wi: -6 });
     sfx(ak.sfx, 0.3, 1.05, 0.03);
     z.cd = 1 / ak.rate;
     if (--z.ammo <= 0) z.reload = ak.reload;

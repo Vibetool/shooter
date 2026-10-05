@@ -40,7 +40,7 @@ const UPGRADES = [
 /* final upgrade, unlocked once all three tracks are maxed */
 const FINAL_UPG = {
   key: 'final', name: 'The Death zone', price: 400,
-  info: 'Green AK-47 fire from your body at 2x damage, plus 1 damage/s to monsters in pistol range.',
+  info: 'AK-47 fire from your body (orange AK-47 damage), plus 1 damage/s to monsters in pistol range.',
   ready: () => UPGRADES.every(u => SAVE.upg[u.key] >= 5)
 };
 const KNIFE = { name: 'Knife', tile: 8, dmg: 2.5, rate: 2.5, range: 26, autoCd: 2 }; // autoCd: seconds between automatic strikes
