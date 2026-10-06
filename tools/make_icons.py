@@ -6,7 +6,7 @@ build itself does not need Pillow)
 """
 import pathlib
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 OUT = ROOT / "icons"
@@ -49,8 +49,32 @@ def icon(size, scale, rounded, name):
     return img
 
 
+def mac_icon(name):
+    """1024 px icon on the macOS app-icon grid (rounded square inset 100 px, soft shadow). The game's
+    "Copy game icon" button puts it on the clipboard so Mac players can paste it onto a shortcut."""
+    size, rect, radius = 1024, 824, 185
+    m = (size - rect) // 2
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    shadow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).rounded_rectangle((m, m + 12, m + rect, m + rect + 12), radius=radius, fill=(0, 0, 0, 70))
+    img.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(14)))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle((m, m, m + rect - 1, m + rect - 1), radius=radius, fill=SAND)
+    h = hero()
+    scale = round(rect * 0.62 / h.height)
+    big = h.resize((h.width * scale, h.height * scale), Image.NEAREST)
+    bx, by = (size - big.width) // 2, (size - big.height) // 2
+    sw, sh = round(big.width * 0.62), round(big.height * 0.1)
+    sy = by + big.height - sh // 2
+    d.ellipse(((size - sw) // 2, sy, (size + sw) // 2, sy + sh), fill=SAND_D)
+    img.alpha_composite(big, (bx, by))
+    img.save(OUT / name, optimize=True)
+    print("wrote", OUT / name)
+
+
 def main():
     OUT.mkdir(exist_ok=True)
+    mac_icon("icon-mac.png")
     icon(192, 5, True, "icon-192.png")
     icon(180, 5, False, "apple-touch-icon.png")  # iOS rounds the corners itself
     icon(32, 1, True, "icon-32.png")

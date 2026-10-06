@@ -103,6 +103,15 @@ const Shortcut = {
       setTimeout(() => URL.revokeObjectURL(a.href), 10000);
       Game.toast('Saved to Downloads: move it to your desktop, then double-click it to play');
     } catch (e) { Game.toast('The download was blocked. Drag the icon onto your desktop instead.'); }
+  },
+  /* macOS gives every web shortcut a plain page icon and a website cannot change it, but Finder takes
+     a pasted picture as a file's icon (Get Info, click the icon, paste). This puts the game icon on the clipboard. */
+  copyIcon() {
+    const fail = () => Game.toast('Copying was blocked here. Try again in Chrome or Safari.');
+    try {
+      const png = fetch('icons/icon-mac.png').then(r => { if (!r.ok) throw new Error('missing icon'); return r.blob(); });
+      navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]).then(() => Game.toast('Game icon copied: now paste it onto the shortcut'), fail);
+    } catch (e) { fail(); }
   }
 };
 class ShortcutDialog extends MenuScene {
@@ -124,7 +133,7 @@ class ShortcutDialog extends MenuScene {
   outside() { this.close(); }
   draw() {
     dim(); this.begin();
-    const x = 85, w = 290, h = this.el ? 178 : 104, y = Math.round(129 - h / 2); // phones: a smaller card, just the steps
+    const mac = this.el && Shortcut.mac(), x = 85, w = 290, h = !this.el ? 104 : mac ? 226 : 178, y = Math.round(129 - h / 2); // phones: a smaller card, just the steps
     this.hit(x, y, w, h, () => {});
     panel('grey', x, y, w, h);
     ptext('SHORTCUT', x + w / 2, y + 10, 'B', 'center');
@@ -145,6 +154,12 @@ class ShortcutDialog extends MenuScene {
       say([['Drag this icon onto your desktop.', true], ['Double-click it any time and the game', false], ['opens in your default browser.', false]], x + 98, y + 44);
       say([['Browser covering the desktop?', true], ['Make the window smaller, or download', false], ['the shortcut and move it to the desktop.', false]], x + 98, y + 80);
       textButton(this, 'grey', x + 98, y + 108, 96, 19, 'Download shortcut', () => Shortcut.download());
+      if (mac) {
+        say([['On a Mac the shortcut looks like a plain page. To give it the game icon:', true],
+          ['Copy the icon, click the shortcut on your desktop and press \u2318I.'],
+          ['In that window, click the small icon at the top left and press \u2318V.']], x + w / 2, y + 140, 'center');
+        textButton(this, 'red', x + w / 2 - 48, y + 166, 96, 19, 'Copy game icon', () => Shortcut.copyIcon());
+      }
     }
     textButton(this, 'red', x + w / 2 - 32, y + h - 28, 64, 21, 'OK', () => this.close());
     this.end();
