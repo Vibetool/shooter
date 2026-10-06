@@ -188,14 +188,15 @@ const TIP_TEXT = {
   shop: () => ['Buy your first gun', 'Click the Pistol in the blue shop. It costs 1 gold.'],
   job: n => ['A job for you', `${NPCS[n].name} has work that pays extra gold. Click ${NPCS[n].name}.`],
   upgrade: () => ['Upgrades', 'Regen, a Fighter and a Skill make runs easier. Click Upgrade.'],
-  shortcut: () => ['Desktop shortcut', 'Make an icon that opens this game in your browser.']
+  shortcut: () => ['Desktop shortcut', 'Make an icon that opens this game in your browser.'],
+  daily: () => ['Daily challenge', 'Mira has a new challenge every day. Click her to hear the rules.']
 };
 const Coach = {
   topCard: 0,
   need(id) { return !SAVE.tut.off && !SAVE.tut[id]; },
   finish(id) { if (!SAVE.tut[id]) { SAVE.tut[id] = 1; persist(); } },
-  /* lessons still to come (the shortcut tip is not a lesson) */
-  pending() { return !SAVE.tut.off && Object.keys(SAVE.tut).some(k => k !== 'off' && k !== 'shortcut' && !SAVE.tut[k]); },
+  /* lessons still to come (the shortcut and daily tips are not lessons) */
+  pending() { return !SAVE.tut.off && Object.keys(SAVE.tut).some(k => !['off', 'shortcut', 'daily'].includes(k) && !SAVE.tut[k]); },
   skip() { SAVE.tut.off = 1; persist(); Game.toast('Tutorial off. Options > Tutorial turns it back on.'); },
   replay() { for (const k in SAVE.tut) SAVE.tut[k] = 0; persist(); },
   /* Mira's hint card: portrait, bold title, the hint, optional buttons on the right. Returns its height. */
@@ -233,6 +234,7 @@ const Coach = {
         if (!T.upgrade && SAVE.gold >= UPG_PRICES[0]) return { id: 'upgrade' };
       }
     }
+    if (!T.daily && T.welcome && SAVE.stats.runs >= 3 && !Daily.doneToday()) return { id: 'daily' };
     if (!T.shortcut && T.welcome && SAVE.stats.runs >= 2 && Shortcut.site()) return { id: 'shortcut' };
     return null;
   },
@@ -241,11 +243,12 @@ const Coach = {
     const t = sc.t, y = 3;
     const btns = tip.id === 'shortcut'
       ? [{ label: 'Make one', kind: 'red', w: 46, fn: () => { this.finish('shortcut'); pushScene(new ShortcutDialog()); } }, { label: 'Later', w: 34, fn: () => this.finish('shortcut') }]
+      : tip.id === 'daily' ? [{ label: 'Open', kind: 'red', w: 34, fn: () => pushScene(new DailyDialog()) }, { label: 'Later', w: 34, fn: () => this.finish('daily') }]
       : [{ label: 'Skip', w: 30, fn: () => this.skip() }];
     this.topCard = y + this.card(sc, 105, y, 250, TIP_TEXT[tip.id](tip.npc), btns) + 5;
     if (tip.id === 'welcome') this.frame(318, 136, 66, 21, t); // the sample's own arrow already points at Start run
     if (tip.id === 'shop') { SAVE.page = 0; this.frame(302, 72, 22, 19, t); this.arrow(313, 52, Math.PI / 2, t); }
-    if (tip.id === 'job' && tip.npc === 'cat') { this.frame(129, 64, 24, 41, t); this.arrow(116, 88, 0, t); }
+    if ((tip.id === 'job' && tip.npc === 'cat') || tip.id === 'daily') { this.frame(129, 64, 24, 41, t); this.arrow(116, 88, 0, t); }
     if (tip.id === 'job' && tip.npc === 'mouse') { this.frame(160, 59, 24, 41, t); this.arrow(172, 113, -Math.PI / 2, t); }
     if (tip.id === 'upgrade') { this.frame(62, 34, 77, 24, t); this.arrow(100, 70, -Math.PI / 2, t); }
   },
@@ -287,18 +290,18 @@ const Coach = {
     if (id === 'portal' && g.portal) return { x: g.portal.x, y: g.portal.y - 4 };
     return null;
   },
+  /* in a run: an arrow bobbing over a world point, or on the screen edge pointing at it when it is off screen */
+  pointAt(g, u, HW, HH, tgt, t) {
+    const k = g.view().Z / u, sx = (tgt.x - g.cam.x) * k, sy = (tgt.y - g.cam.y) * k, m = 20;
+    if (sx > m && sy > m + 30 && sx < HW - m && sy < HH - 60) { this.arrow(sx, sy - 16, Math.PI / 2, t); return; }
+    const a = Math.atan2(sy - HH / 2, sx - HW / 2), c = Math.cos(a), s = Math.sin(a);
+    const r = Math.min(Math.abs(c) > 1e-3 ? (HW / 2 - m) / Math.abs(c) : 1e9, Math.abs(s) > 1e-3 ? (HH / 2 - m - 30) / Math.abs(s) : 1e9);
+    this.arrow(HW / 2 + c * r, HH / 2 + s * r, a, t);
+  },
   drawRun(g, u, HW, HH) {
     const id = g.coachStep; if (!id || g.p.dead) return;
-    const tgt = this.runTarget(g, id), t = g.t;
-    if (tgt) {
-      const k = g.view().Z / u, sx = (tgt.x - g.cam.x) * k, sy = (tgt.y - g.cam.y) * k, m = 20;
-      if (sx > m && sy > m + 30 && sx < HW - m && sy < HH - 60) this.arrow(sx, sy - 16, Math.PI / 2, t); // on screen: bob above it
-      else { // off screen: an arrow on the edge, pointing the way
-        const a = Math.atan2(sy - HH / 2, sx - HW / 2), c = Math.cos(a), s = Math.sin(a);
-        const r = Math.min(Math.abs(c) > 1e-3 ? (HW / 2 - m) / Math.abs(c) : 1e9, Math.abs(s) > 1e-3 ? (HH / 2 - m - 30) / Math.abs(s) : 1e9);
-        this.arrow(HW / 2 + c * r, HH / 2 + s * r, a, t);
-      }
-    }
+    const tgt = this.runTarget(g, id);
+    if (tgt) this.pointAt(g, u, HW, HH, tgt, g.t);
     this.card(null, HW / 2 - 125, HH - 8, 250, TIP_TEXT[id](), [], true);
   }
 };
@@ -563,7 +566,8 @@ class Confirm extends MenuScene {
     this.hit(x, y, w, h, () => {});
     panel('grey', x, y, w, h);
     stext(this.title, x + w / 2, y + 20, 7, P.dark, 'center', 700);
-    stext(this.body, x + w / 2, y + 33, 5.6, P.dark, 'center', 500);
+    const lines = [].concat(this.body); // one line, or two
+    lines.forEach((l, k) => stext(l, x + w / 2, y + 33 - (lines.length - 1) * 4 + k * 8, 5.6, P.dark, 'center', 500));
     textButton(this, 'red', x + 20, y + 50, 64, 21, this.yes, () => { popScene(this); this.fn(); });
     textButton(this, 'grey', x + 96, y + 50, 64, 21, 'Cancel', () => popScene(this));
     this.end();
@@ -583,6 +587,7 @@ class Levels extends MenuScene {
     ptext('SELECT LEVEL', 230, 15, 'B', 'center');
     textButton(this, 'grey', 10, 10, 50, 21, 'Back', () => popScene(this));
     textButton(this, 'grey', 70, 10, 50, 21, 'PVP', () => pushScene(new PvpLobby()));
+    textButton(this, Daily.doneToday() ? 'grey' : 'red', 322, 10, 56, 21, 'Daily', () => pushScene(new DailyDialog()), ['Daily challenge', DAILY[Daily.type()].name, Daily.doneToday() ? 'Done for today' : 'Mira has the rules']);
     spr('tiles', 225, 400, 12); ptext(String(SAVE.gold), 415, 13, 'A');
     const unl = highestUnlocked(), shown = Math.min(LEVEL_N, unl + 3), pages = this.pages();
     this.page = clamp(this.page, 0, pages - 1);
@@ -621,9 +626,7 @@ class Levels extends MenuScene {
 
 /* ---------------- OPTIONS ---------------- */
 class Options extends MenuScene {
-  constructor() { super(); this.confirmT = 0; }
   key(k) { if (k === 'escape') popScene(this); }
-  update(dt) { super.update(dt); this.confirmT = Math.max(0, this.confirmT - dt); }
   draw() {
     dim(); this.begin();
     const x = 96, y = 6, w = 268, h = 246;
@@ -651,12 +654,7 @@ class Options extends MenuScene {
     });
     textButton(this, 'grey', x + 120, row(5, 'Tutorial') - 3, 50, 19, 'Replay', () => { Coach.replay(); Game.toast('Tutorial on: Mira will show you around again'); });
     textButton(this, 'grey', x + 120, row(6, Shortcut.phone() ? 'Home screen icon' : 'Desktop shortcut') - 3, 50, 19, 'Make', () => pushScene(new ShortcutDialog()));
-    const yy = row(7, 'Reset progress');
-    textButton(this, this.confirmT > 0 ? 'red' : 'grey', x + 120, yy - 3, 70, 19, this.confirmT > 0 ? 'Confirm wipe' : 'Reset', () => {
-      if (this.confirmT > 0) { const keep = { settings: SAVE.settings, pvpUid: SAVE.pvpUid, pvpName: SAVE.pvpName, pvp: SAVE.pvp, adminSeq: SAVE.adminSeq }; SAVE = Object.assign(defaultSave(), keep); persist(); this.confirmT = 0; Game.toast('Progress reset. Welcome back to Dustwell.'); }
-      else this.confirmT = 3;
-    });
-    if (this.confirmT > 0) stext('Click again to erase gold, weapons and levels', x + 196, yy + 7, 4.4, P.redD, 'left', 600);
+    textButton(this, 'grey', x + 120, row(7, 'Save data') - 3, 50, 19, 'Open', () => pushScene(new SaveDialog()));
     const help = ['WASD or arrows move. Mouse aims, hold left click to shoot.', 'Your knife strikes by itself every 2 seconds when a monster is close.', 'Space dashes, R reloads, Esc pauses.'];
     help.forEach((l, k) => stext(l, x + w / 2, y + 196 + k * 8, 5, P.dark, 'center', 500));
     textButton(this, 'red', x + w / 2 - 32, y + h - 26, 64, 21, 'Done', () => popScene(this));
@@ -739,6 +737,7 @@ class NpcDialog extends MenuScene {
     for (let k = 0; k < 9; k++) spr('ui', sq[k], x + 12 + (k % 3) * 16, y + 12 + Math.floor(k / 3) * 16);
     spr('players', N.f + (this.t % 1.2 < 0.6 ? 0 : 1), x + 18, y + 18, { scale: 1.5, flip: id === 'mouse' });
     ptext(N.name, x + 70, y + 16, 'A');
+    if (id === 'cat') textButton(this, Daily.doneToday() ? 'grey' : 'red', x + w - 104, y + 14, 90, 19, 'Daily challenge', () => { popScene(this); pushScene(new DailyDialog()); });
     stext(N.title + ' of Dustwell', x + 71, y + 40, 5.6, P.dark, 'left', 600);
     const bx = x + 14, bw = w - 28;
     let yy = y + 70;

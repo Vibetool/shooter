@@ -370,7 +370,8 @@ function defaultSave() {
     npcs: { cat: { next: now, quest: null, count: 0 }, mouse: { next: now + STAGGER_MS, quest: null, count: 0 } }, lastJobAt: 0,
     upg: { regen: 0, fighter: 0, skill: 0, final: 0 },
     pvpName: '', pvpUid: '', pvp: { wins: 0, losses: 0 }, banned: 0, adminSeq: 0,
-    tut: { welcome: 0, move: 0, shoot: 0, fight: 0, coins: 0, dash: 0, chest: 0, clear: 0, portal: 0, shop: 0, job: 0, upgrade: 0, shortcut: 0, off: 0 },
+    tut: { welcome: 0, move: 0, shoot: 0, fight: 0, coins: 0, dash: 0, chest: 0, clear: 0, portal: 0, shop: 0, job: 0, upgrade: 0, shortcut: 0, daily: 0, off: 0 },
+    daily: { day: -1, streak: 0, wins: 0 },
     settings: { sfx: 0.8, music: 0.45, shake: 1, nums: 1 }
   };
 }
@@ -384,8 +385,8 @@ function normalizeSave(s) {
     else d[k] = s[k];
   }
   for (const n of ['cat', 'mouse']) { const o = d.npcs[n]; if (typeof o !== 'object' || !o) d.npcs[n] = defaultSave().npcs[n]; }
-  // saves from before the tutorial existed: players who already played skip the lessons (they still get the shortcut tip)
-  if (!s.tut && (d.stats.runs > 0 || d.cleared.some(Boolean))) { for (const k in d.tut) d.tut[k] = 1; d.tut.shortcut = 0; }
+  // saves from before the tutorial existed: players who already played skip the lessons (they still get the shortcut and daily tips)
+  if (!s.tut && (d.stats.runs > 0 || d.cleared.some(Boolean))) { for (const k in d.tut) d.tut[k] = 1; d.tut.shortcut = 0; d.tut.daily = 0; }
   return d;
 }
 function loadLocal() { try { const t = localStorage.getItem(SAVE_KEY); return t ? JSON.parse(t) : null; } catch (e) { return null; } }
@@ -754,9 +755,10 @@ const FN = {
 const MAP_CACHE = {};
 function getMap(li) { if (!MAP_CACHE[li]) MAP_CACHE[li] = genMap(li); return MAP_CACHE[li]; }
 
-function genMap(li) {
+/* seed: daily challenges pass their own, so the same level theme gets a fresh layout every day */
+function genMap(li, seed) {
   const L = li + 1, def = LEVELS[li], th = def.th;
-  const r = rng(1009 + L * 7919);
+  const r = rng(seed != null ? seed : 1009 + L * 7919);
   const W = def.w, H = def.h, N = W * H;
   const g0 = new Int16Array(N), g1 = new Int16Array(N).fill(-1), g2 = new Int16Array(N).fill(-1), g3 = new Int16Array(N).fill(-1);
   const solid = new Uint8Array(N), hgt = new Uint8Array(N), occ = new Uint8Array(N), pocc = new Uint8Array(N);
@@ -1011,6 +1013,71 @@ function genMap(li) {
   return { L, W, H, g0, g1, g2, g3, solid, hgt, reach, floor, spawn, spawnPts, chests, medkits, shadows, canvas: null, over: null };
 }
 
+/* Daily "Rescue" arena. A red railing runs across the map: the hero slips through it, monsters cannot
+   (solid bit 4). The start and the exit portal sit on the safe strip at the bottom; the little squirrel
+   waits in a chain-fence pen near the top, deep in monster land. */
+function genRescueMap(seed) {
+  const r = rng(seed), W = 40, H = 44, N = W * H, fy = H - 10;
+  const g0 = new Int16Array(N), g1 = new Int16Array(N).fill(-1), g2 = new Int16Array(N).fill(-1), g3 = new Int16Array(N).fill(-1);
+  const solid = new Uint8Array(N), hgt = new Uint8Array(N), keep = new Uint8Array(N);
+  const id = (x, y) => y * W + x, inb = (x, y) => x >= 0 && y >= 0 && x < W && y < H;
+  const mark = (x0, y0, w, h) => { for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) if (inb(x, y)) keep[id(x, y)] = 1; };
+  for (let i = 0; i < N; i++) g0[i] = r() < 0.13 ? 65 : 64;
+  // ground patches for colour
+  for (let k = 0; k < 9; k++) {
+    const S = PS[pick(r, ['p', 't', 'd', 'd'])], w = rint(r, 3, 7), h = rint(r, 3, 5), x0 = rint(r, 1, W - w - 1), y0 = rint(r, 1, H - h - 1);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const col = x === 0 ? 0 : x === w - 1 ? 2 : 1, row = y === 0 ? 0 : y === h - 1 ? 2 : 1;
+      g0[id(x0 + x, y0 + y)] = row === 1 && col === 1 && r() < 0.12 ? S[9] : S[row * 3 + col];
+    }
+  }
+  // the railing across the whole map
+  for (let x = 0; x < W; x++) { const i = id(x, fy); g1[i] = 142; solid[i] = 4; }
+  mark(0, fy - 1, W, 3);
+  // the pen around the squirrel (no gate: the hero slips through, monsters stay out)
+  const pw = 6, ph = 5, px0 = rint(r, 4, W - pw - 4), py0 = rint(r, 4, 7); // a few rows down, so the HUD never covers it
+  for (let y = 0; y < ph; y++) for (let x = 0; x < pw; x++) {
+    if (x > 0 && y > 0 && x < pw - 1 && y < ph - 1) continue;
+    const i = id(px0 + x, py0 + y);
+    g1[i] = y === 0 ? (x === 0 ? 177 : x === pw - 1 ? 179 : 178) : y === ph - 1 ? (x === 0 ? 213 : x === pw - 1 ? 215 : 214) : (x === 0 ? 195 : 197);
+    solid[i] = 4;
+  }
+  mark(px0 - 2, py0 - 2, pw + 4, ph + 4);
+  const animal = { x: px0 + 2, y: py0 + 2 }, spawn = { x: W >> 1, y: H - 5 };
+  mark(spawn.x - 3, spawn.y - 3, 7, 7);
+  // cover: plenty on the monster side, a little on the safe strip
+  const decor = (n, y0, y1) => {
+    for (let k = 0; k < n; k++) {
+      const x = rint(r, 1, W - 2), y = rint(r, y0, y1), i = id(x, y);
+      if (keep[i] || solid[i] || g2[i] >= 0) continue;
+      const q = r();
+      g2[i] = q < 0.4 ? (r() < 0.6 ? 63 : 81) : q < 0.75 ? pick(r, [76, 82, 83]) : pick(r, [62, 80, 57]);
+      solid[i] = 3; keep[i] = 1;
+    }
+  };
+  decor(46, 1, fy - 2); decor(6, fy + 2, H - 2);
+  for (let k = 0; k < 10; k++) { const x = rint(r, 1, W - 2), y = rint(r, 1, H - 2), i = id(x, y); if (!keep[i] && g2[i] < 0 && !solid[i]) g2[i] = 58; }
+  // where the hero can walk (fences do not stop the hero)
+  const reach = new Uint8Array(N), stack = [id(spawn.x, spawn.y)]; reach[stack[0]] = 1;
+  while (stack.length) {
+    const i = stack.pop(), x = i % W, y = (i / W) | 0;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx, ny = y + dy; if (!inb(nx, ny)) continue;
+      const j = id(nx, ny); if (reach[j] || (solid[j] & 1)) continue;
+      reach[j] = 1; stack.push(j);
+    }
+  }
+  const floor = []; for (let i = 0; i < N; i++) if (reach[i] && !solid[i] && (g2[i] < 0 || g2[i] === 58)) floor.push(i);
+  const inPen = i => { const x = i % W, y = (i / W) | 0; return x >= px0 - 1 && x <= px0 + pw && y >= py0 - 1 && y <= py0 + ph; };
+  const monsterFloor = floor.filter(i => ((i / W) | 0) < fy - 1 && !inPen(i));
+  const take = list => { if (!list.length) return null; const i = list[Math.floor(r() * list.length)]; return { x: i % W, y: (i / W) | 0 }; };
+  const chests = [], medkits = [];
+  for (let k = 0; k < 2; k++) { const c = take(monsterFloor.filter(i => { const y = (i / W) | 0; return y > py0 + ph + 3 && y < fy - 4; })); if (c) chests.push({ x: c.x, y: c.y, gold: false }); }
+  const m1 = take(monsterFloor.filter(i => ((i / W) | 0) < fy - 8)); if (m1) medkits.push(m1);
+  const m2 = take(floor.filter(i => { const x = i % W, y = (i / W) | 0; return y > fy + 1 && Math.abs(x - spawn.x) > 5; })); if (m2) medkits.push(m2);
+  return { L: 1, W, H, g0, g1, g2, g3, solid, hgt, reach, floor, spawn, spawnPts: [], chests, medkits, shadows: [], canvas: null, over: null, fenceY: fy, pen: { x0: px0, y0: py0, w: pw, h: ph }, animal, monsterFloor };
+}
+
 function tileImg(i) { const s = SHEET.tiles; return [(i % 18) * 16, Math.floor(i / 18) * 16]; }
 function renderMap(m) {
   if (m.canvas) return m;
@@ -1218,14 +1285,15 @@ const TIP_TEXT = {
   shop: () => ['Buy your first gun', 'Click the Pistol in the blue shop. It costs 1 gold.'],
   job: n => ['A job for you', `${NPCS[n].name} has work that pays extra gold. Click ${NPCS[n].name}.`],
   upgrade: () => ['Upgrades', 'Regen, a Fighter and a Skill make runs easier. Click Upgrade.'],
-  shortcut: () => ['Desktop shortcut', 'Make an icon that opens this game in your browser.']
+  shortcut: () => ['Desktop shortcut', 'Make an icon that opens this game in your browser.'],
+  daily: () => ['Daily challenge', 'Mira has a new challenge every day. Click her to hear the rules.']
 };
 const Coach = {
   topCard: 0,
   need(id) { return !SAVE.tut.off && !SAVE.tut[id]; },
   finish(id) { if (!SAVE.tut[id]) { SAVE.tut[id] = 1; persist(); } },
-  /* lessons still to come (the shortcut tip is not a lesson) */
-  pending() { return !SAVE.tut.off && Object.keys(SAVE.tut).some(k => k !== 'off' && k !== 'shortcut' && !SAVE.tut[k]); },
+  /* lessons still to come (the shortcut and daily tips are not lessons) */
+  pending() { return !SAVE.tut.off && Object.keys(SAVE.tut).some(k => !['off', 'shortcut', 'daily'].includes(k) && !SAVE.tut[k]); },
   skip() { SAVE.tut.off = 1; persist(); Game.toast('Tutorial off. Options > Tutorial turns it back on.'); },
   replay() { for (const k in SAVE.tut) SAVE.tut[k] = 0; persist(); },
   /* Mira's hint card: portrait, bold title, the hint, optional buttons on the right. Returns its height. */
@@ -1263,6 +1331,7 @@ const Coach = {
         if (!T.upgrade && SAVE.gold >= UPG_PRICES[0]) return { id: 'upgrade' };
       }
     }
+    if (!T.daily && T.welcome && SAVE.stats.runs >= 3 && !Daily.doneToday()) return { id: 'daily' };
     if (!T.shortcut && T.welcome && SAVE.stats.runs >= 2 && Shortcut.site()) return { id: 'shortcut' };
     return null;
   },
@@ -1271,11 +1340,12 @@ const Coach = {
     const t = sc.t, y = 3;
     const btns = tip.id === 'shortcut'
       ? [{ label: 'Make one', kind: 'red', w: 46, fn: () => { this.finish('shortcut'); pushScene(new ShortcutDialog()); } }, { label: 'Later', w: 34, fn: () => this.finish('shortcut') }]
+      : tip.id === 'daily' ? [{ label: 'Open', kind: 'red', w: 34, fn: () => pushScene(new DailyDialog()) }, { label: 'Later', w: 34, fn: () => this.finish('daily') }]
       : [{ label: 'Skip', w: 30, fn: () => this.skip() }];
     this.topCard = y + this.card(sc, 105, y, 250, TIP_TEXT[tip.id](tip.npc), btns) + 5;
     if (tip.id === 'welcome') this.frame(318, 136, 66, 21, t); // the sample's own arrow already points at Start run
     if (tip.id === 'shop') { SAVE.page = 0; this.frame(302, 72, 22, 19, t); this.arrow(313, 52, Math.PI / 2, t); }
-    if (tip.id === 'job' && tip.npc === 'cat') { this.frame(129, 64, 24, 41, t); this.arrow(116, 88, 0, t); }
+    if ((tip.id === 'job' && tip.npc === 'cat') || tip.id === 'daily') { this.frame(129, 64, 24, 41, t); this.arrow(116, 88, 0, t); }
     if (tip.id === 'job' && tip.npc === 'mouse') { this.frame(160, 59, 24, 41, t); this.arrow(172, 113, -Math.PI / 2, t); }
     if (tip.id === 'upgrade') { this.frame(62, 34, 77, 24, t); this.arrow(100, 70, -Math.PI / 2, t); }
   },
@@ -1317,18 +1387,18 @@ const Coach = {
     if (id === 'portal' && g.portal) return { x: g.portal.x, y: g.portal.y - 4 };
     return null;
   },
+  /* in a run: an arrow bobbing over a world point, or on the screen edge pointing at it when it is off screen */
+  pointAt(g, u, HW, HH, tgt, t) {
+    const k = g.view().Z / u, sx = (tgt.x - g.cam.x) * k, sy = (tgt.y - g.cam.y) * k, m = 20;
+    if (sx > m && sy > m + 30 && sx < HW - m && sy < HH - 60) { this.arrow(sx, sy - 16, Math.PI / 2, t); return; }
+    const a = Math.atan2(sy - HH / 2, sx - HW / 2), c = Math.cos(a), s = Math.sin(a);
+    const r = Math.min(Math.abs(c) > 1e-3 ? (HW / 2 - m) / Math.abs(c) : 1e9, Math.abs(s) > 1e-3 ? (HH / 2 - m - 30) / Math.abs(s) : 1e9);
+    this.arrow(HW / 2 + c * r, HH / 2 + s * r, a, t);
+  },
   drawRun(g, u, HW, HH) {
     const id = g.coachStep; if (!id || g.p.dead) return;
-    const tgt = this.runTarget(g, id), t = g.t;
-    if (tgt) {
-      const k = g.view().Z / u, sx = (tgt.x - g.cam.x) * k, sy = (tgt.y - g.cam.y) * k, m = 20;
-      if (sx > m && sy > m + 30 && sx < HW - m && sy < HH - 60) this.arrow(sx, sy - 16, Math.PI / 2, t); // on screen: bob above it
-      else { // off screen: an arrow on the edge, pointing the way
-        const a = Math.atan2(sy - HH / 2, sx - HW / 2), c = Math.cos(a), s = Math.sin(a);
-        const r = Math.min(Math.abs(c) > 1e-3 ? (HW / 2 - m) / Math.abs(c) : 1e9, Math.abs(s) > 1e-3 ? (HH / 2 - m - 30) / Math.abs(s) : 1e9);
-        this.arrow(HW / 2 + c * r, HH / 2 + s * r, a, t);
-      }
-    }
+    const tgt = this.runTarget(g, id);
+    if (tgt) this.pointAt(g, u, HW, HH, tgt, g.t);
     this.card(null, HW / 2 - 125, HH - 8, 250, TIP_TEXT[id](), [], true);
   }
 };
@@ -1593,7 +1663,8 @@ class Confirm extends MenuScene {
     this.hit(x, y, w, h, () => {});
     panel('grey', x, y, w, h);
     stext(this.title, x + w / 2, y + 20, 7, P.dark, 'center', 700);
-    stext(this.body, x + w / 2, y + 33, 5.6, P.dark, 'center', 500);
+    const lines = [].concat(this.body); // one line, or two
+    lines.forEach((l, k) => stext(l, x + w / 2, y + 33 - (lines.length - 1) * 4 + k * 8, 5.6, P.dark, 'center', 500));
     textButton(this, 'red', x + 20, y + 50, 64, 21, this.yes, () => { popScene(this); this.fn(); });
     textButton(this, 'grey', x + 96, y + 50, 64, 21, 'Cancel', () => popScene(this));
     this.end();
@@ -1613,6 +1684,7 @@ class Levels extends MenuScene {
     ptext('SELECT LEVEL', 230, 15, 'B', 'center');
     textButton(this, 'grey', 10, 10, 50, 21, 'Back', () => popScene(this));
     textButton(this, 'grey', 70, 10, 50, 21, 'PVP', () => pushScene(new PvpLobby()));
+    textButton(this, Daily.doneToday() ? 'grey' : 'red', 322, 10, 56, 21, 'Daily', () => pushScene(new DailyDialog()), ['Daily challenge', DAILY[Daily.type()].name, Daily.doneToday() ? 'Done for today' : 'Mira has the rules']);
     spr('tiles', 225, 400, 12); ptext(String(SAVE.gold), 415, 13, 'A');
     const unl = highestUnlocked(), shown = Math.min(LEVEL_N, unl + 3), pages = this.pages();
     this.page = clamp(this.page, 0, pages - 1);
@@ -1651,9 +1723,7 @@ class Levels extends MenuScene {
 
 /* ---------------- OPTIONS ---------------- */
 class Options extends MenuScene {
-  constructor() { super(); this.confirmT = 0; }
   key(k) { if (k === 'escape') popScene(this); }
-  update(dt) { super.update(dt); this.confirmT = Math.max(0, this.confirmT - dt); }
   draw() {
     dim(); this.begin();
     const x = 96, y = 6, w = 268, h = 246;
@@ -1681,12 +1751,7 @@ class Options extends MenuScene {
     });
     textButton(this, 'grey', x + 120, row(5, 'Tutorial') - 3, 50, 19, 'Replay', () => { Coach.replay(); Game.toast('Tutorial on: Mira will show you around again'); });
     textButton(this, 'grey', x + 120, row(6, Shortcut.phone() ? 'Home screen icon' : 'Desktop shortcut') - 3, 50, 19, 'Make', () => pushScene(new ShortcutDialog()));
-    const yy = row(7, 'Reset progress');
-    textButton(this, this.confirmT > 0 ? 'red' : 'grey', x + 120, yy - 3, 70, 19, this.confirmT > 0 ? 'Confirm wipe' : 'Reset', () => {
-      if (this.confirmT > 0) { const keep = { settings: SAVE.settings, pvpUid: SAVE.pvpUid, pvpName: SAVE.pvpName, pvp: SAVE.pvp, adminSeq: SAVE.adminSeq }; SAVE = Object.assign(defaultSave(), keep); persist(); this.confirmT = 0; Game.toast('Progress reset. Welcome back to Dustwell.'); }
-      else this.confirmT = 3;
-    });
-    if (this.confirmT > 0) stext('Click again to erase gold, weapons and levels', x + 196, yy + 7, 4.4, P.redD, 'left', 600);
+    textButton(this, 'grey', x + 120, row(7, 'Save data') - 3, 50, 19, 'Open', () => pushScene(new SaveDialog()));
     const help = ['WASD or arrows move. Mouse aims, hold left click to shoot.', 'Your knife strikes by itself every 2 seconds when a monster is close.', 'Space dashes, R reloads, Esc pauses.'];
     help.forEach((l, k) => stext(l, x + w / 2, y + 196 + k * 8, 5, P.dark, 'center', 500));
     textButton(this, 'red', x + w / 2 - 32, y + h - 26, 64, 21, 'Done', () => popScene(this));
@@ -1769,6 +1834,7 @@ class NpcDialog extends MenuScene {
     for (let k = 0; k < 9; k++) spr('ui', sq[k], x + 12 + (k % 3) * 16, y + 12 + Math.floor(k / 3) * 16);
     spr('players', N.f + (this.t % 1.2 < 0.6 ? 0 : 1), x + 18, y + 18, { scale: 1.5, flip: id === 'mouse' });
     ptext(N.name, x + 70, y + 16, 'A');
+    if (id === 'cat') textButton(this, Daily.doneToday() ? 'grey' : 'red', x + w - 104, y + 14, 90, 19, 'Daily challenge', () => { popScene(this); pushScene(new DailyDialog()); });
     stext(N.title + ' of Dustwell', x + 71, y + 40, 5.6, P.dark, 'left', 600);
     const bx = x + 14, bw = w - 28;
     let yy = y + 70;
@@ -1820,18 +1886,18 @@ const angDiff = (a, b) => { let d = (a - b) % TAU; if (d > Math.PI) d -= TAU; if
 
 class Play {
   constructor(li, opts = {}) {
-    this.li = li; this.L = li + 1; this.def = LEVELS[li];
-    const m = this.map = renderMap(getMap(li));
+    this.li = li; this.L = li + 1; this.def = opts.def || LEVELS[li]; this.opts = opts;
+    const m = this.map = renderMap(opts.map || getMap(li));
     this.t = 0; this.state = 'play'; this.time = 0;
     this.ents = []; this.bullets = []; this.ebullets = []; this.coins = []; this.parts = []; this.nums = [];
     this.chests = m.chests.map(c => ({ x: c.x * T + 8, y: c.y * T + 12, gold: c.gold, open: false }));
     this.meds = m.medkits.map(c => ({ x: c.x * T + 8, y: c.y * T + 12, used: false }));
     const wi = SAVE.owned[SAVE.equipped] ? SAVE.equipped : -1;
     this.p = { x: m.spawn.x * T + 8, y: m.spawn.y * T + 10, vx: 0, vy: 0, h: 0, ramp: false, hp: 10, maxHp: 10, inv: 1, aim: 0, wi,
-      ammo: wi >= 0 ? WEAPONS[wi].mag : 0, reload: 0, cd: 0, knifeT: 0, knifeCd: 0, autoKnifeCd: 0, knifeA: 0, autoShotCd: 1, dashT: 0, dashCd: 0, dashX: 0, dashY: 0, walk: 0, moving: false, dead: false, scale: 1, shield: 1, maxShield: 1 };
-    this.total = levelCount(this.L); this.spawned = 0; this.killed = 0; this.spawnT = 1.5;
-    this.bossDef = BOSSES[this.L] || null; this.bossSpawned = false; this.bossEnt = null; this.bossDead = false;
-    this.cap = 4 + Math.floor(this.L * 0.6);
+      ammo: wi >= 0 ? WEAPONS[wi].mag : 0, reload: 0, cd: 0, knifeT: 0, knifeCd: 0, autoKnifeCd: 0, knifeA: 0, autoShotCd: 1, dashT: 0, dashCd: 0, dashX: 0, dashY: 0, walk: 0, moving: false, dead: false, scale: 1, shield: 1, maxShield: 1, hero: true };
+    this.total = opts.total != null ? opts.total : levelCount(this.L); this.spawned = 0; this.killed = 0; this.spawnT = 1.5;
+    this.bossDef = opts.challenge ? null : BOSSES[this.L] || null; this.bossSpawned = false; this.bossEnt = null; this.bossDead = false;
+    this.cap = opts.cap || 4 + Math.floor(this.L * 0.6);
     this.hits = 0; this.goldRun = 0; this.killsRun = 0; this.chestsRun = 0;
     this.cam = { x: 0, y: 0 }; this.shake = 0;
     this.flow = new Int16Array(m.W * m.H); this.flowT = 0; this.flowCell = -1; this.q = new Int32Array(m.W * m.H);
@@ -1839,23 +1905,23 @@ class Play {
     this.upg = { regen: SAVE.upg.regen, fighter: SAVE.upg.fighter, skill: SAVE.upg.skill, final: SAVE.upg.final };
     this.dz = { ammo: WEAPONS[5].mag, reload: 0, cd: 0.5, aura: 0 };
     this.regenT = 0; this.skillT = 0; this.shieldT = 0; this.ally = null;
-    this.banner = { lines: ['LEVEL ' + this.L], sub: this.def.name, t: 2.2, kind: 'red' };
+    this.banner = opts.banner || { lines: ['LEVEL ' + this.L], sub: this.def.name, t: 2.2, kind: 'red' };
     this.paused = false; this.result = null; this.hot = []; this.saveT = 0;
     this.tMove = null; this.tAim = null;
     if (opts.pvp) { this.chests = []; this.meds = []; this.banner = null; this.upg = { regen: 0, fighter: 0, skill: 0, final: 0 }; this.snapCam(); return; }
     SAVE.stats.runs++; persist();
     // tutorial: Mira's hints for this run (see Coach in ui.js)
-    Coach.finish('welcome'); this.coach = Coach.pending(); this.coachStep = null; this.coachT = 0; this.coachMoved = 0; this.coachShots = 0;
+    Coach.finish('welcome'); this.coach = !opts.challenge && Coach.pending(); this.coachStep = null; this.coachT = 0; this.coachMoved = 0; this.coachShots = 0;
     Game.toast('Shield ready: it blocks 1 damage and recharges');
     Music.intensity = 1;
-    const initial = Math.min(this.total, Math.ceil(this.cap * 0.6));
+    const initial = opts.initial != null ? opts.initial : Math.min(this.total, Math.ceil(this.cap * 0.6));
     for (let k = 0; k < initial; k++) this.spawnEnemy(false);
     this.computeFlow(); this.snapCam();
     sfx('jump-c', 0.6);
   }
   /* ---------- helpers ---------- */
   cell(x, y) { const m = this.map; const cx = clamp(Math.floor(x / T), 0, m.W - 1), cy = clamp(Math.floor(y / T), 0, m.H - 1); return cy * m.W + cx; }
-  passable(i, e) { const m = this.map; if (m.solid[i] & 1) return false; const h = m.hgt[i]; return h === 2 || e.ramp || h === e.h; }
+  passable(i, e) { const m = this.map; if ((m.solid[i] & 1) || ((m.solid[i] & 4) && !e.hero && !e.ally)) return false; const h = m.hgt[i]; return h === 2 || e.ramp || h === e.h; }
   blockedAt(x, y, e, r) {
     const m = this.map;
     for (let k = 0; k < 4; k++) {
@@ -1882,15 +1948,16 @@ class Play {
     return true;
   }
   computeFlow() { this.flowCell = this.bfs(this.cell(this.p.x, this.p.y), this.flow); }
-  /* walking distance (in cells) from one cell to every reachable cell, honoring heights and ramps */
-  bfs(s, f) {
-    const m = this.map, W = m.W, q = this.q; f.fill(-1);
+  /* walking distance (in cells) from one cell to every reachable cell, honoring heights and ramps;
+     fences block it unless the walker may cross them (the fighter) */
+  bfs(s, f, crossFences) {
+    const m = this.map, W = m.W, q = this.q, stop = crossFences ? 1 : 5; f.fill(-1);
     f[s] = 0; let qh = 0, qt = 0; q[qt++] = s;
     while (qh < qt) {
       const i = q[qh++], x = i % W, ha = m.hgt[i];
       const nb = [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, i - W, i + W];
       for (const j of nb) {
-        if (j < 0 || j >= f.length || f[j] >= 0 || (m.solid[j] & 1)) continue;
+        if (j < 0 || j >= f.length || f[j] >= 0 || (m.solid[j] & stop)) continue;
         const hb = m.hgt[j]; if (!(ha === hb || ha === 2 || hb === 2)) continue;
         f[j] = f[i] + 1; q[qt++] = j;
       }
@@ -2078,7 +2145,7 @@ class Play {
   }
   spawnAlly() {
     const p = this.p;
-    this.ally = { x: p.x, y: p.y, h: p.h, ramp: p.ramp, face: 1, anim: 0, moving: false, target: null, cd: 0.5, swingT: 0, swingA: 0, flowT: 0, flowCell: -1, lost: 0, chase: 0 };
+    this.ally = { x: p.x, y: p.y, h: p.h, ramp: p.ramp, face: 1, anim: 0, moving: false, target: null, cd: 0.5, swingT: 0, swingA: 0, flowT: 0, flowCell: -1, lost: 0, chase: 0, ally: true };
     this.aflow = new Int16Array(this.map.W * this.map.H);
   }
   /* the fighter picks a random monster, runs to it and swings its orange knife; monsters ignore it */
@@ -2090,7 +2157,7 @@ class Play {
     let tx = p.x - 14, ty = p.y, f = this.flow;
     if (a.target) {
       const e = a.target, tc = this.cell(e.x, e.y); tx = e.x; ty = e.y;
-      a.flowT -= dt; if (a.flowT <= 0 || tc !== a.flowCell) { a.flowCell = this.bfs(tc, this.aflow); a.flowT = 0.4; }
+      a.flowT -= dt; if (a.flowT <= 0 || tc !== a.flowCell) { a.flowCell = this.bfs(tc, this.aflow, true); a.flowT = 0.4; }
       f = this.aflow;
       if (f[this.cell(a.x, a.y)] < 0 && (a.lost += dt) > 0.5) a.target = null;
     }
@@ -2174,6 +2241,7 @@ class Play {
     if (this.banner) { this.banner.t -= dt; if (this.banner.t <= 0) this.banner = null; }
     this.controlPlayer(dt);
     if (this.coach) Coach.run(this, dt);
+    if (this.ruleTick) this.ruleTick(dt); // daily challenge rules
     // flow field
     this.flowT -= dt; const pc = this.cell(p.x, p.y);
     if (this.flowT <= 0 || pc !== this.flowCell) { this.computeFlow(); this.flowT = 0.4; }
@@ -2183,13 +2251,7 @@ class Play {
       const alive = this.ents.filter(e => !e.dead && !e.boss).length;
       if (this.spawnT <= 0 && this.spawned < this.total && alive < this.cap) { this.spawnEnemy(true); this.spawnT = Math.max(0.9, 2.6 - this.L * 0.06) * (0.7 + R() * 0.6); }
       if (this.bossDef && !this.bossSpawned && this.killed >= Math.ceil(this.total / 2)) this.spawnBoss();
-      const done = this.spawned >= this.total && (!this.bossDef || this.bossDead) && !this.ents.some(e => !e.dead);
-      if (done) {
-        this.state = 'clear';
-        this.portal = { x: m.spawn.x * T + 8, y: m.spawn.y * T + 8 };
-        this.banner = { lines: ['LEVEL CLEAR'], sub: 'Step into the portal by your start point', t: 3, kind: 'red' };
-        sfx('coin-d', 0.9); this.coins.forEach(c => { c.mag = true; });
-      }
+      if (this.state === 'play' && this.levelDone()) this.onClear();
     }
     // enemies
     for (const e of this.ents) this.updEnemy(e, dt);
@@ -2246,11 +2308,22 @@ class Play {
       if (Math.abs(p.x - md.x) < 10 && Math.abs(p.y - md.y) < 10) { md.used = true; p.hp = Math.min(p.maxHp, p.hp + 4); sfx('jump-a', 0.7, 1.3); this.spark(md.x, md.y - 8, 10, P.teal); Game.toast('+4 health'); }
     }
     // portal
-    if (this.portal && !p.dead && Math.hypot(p.x - this.portal.x, p.y - this.portal.y) < 10) this.finish(true);
+    if (this.portal && !p.dead && Math.hypot(p.x - this.portal.x, p.y - this.portal.y) < 10 && this.canEnter()) this.finish(true);
     if (this.state === 'dead') { this.deadT -= dt; if (this.deadT <= 0 && !this.result) this.finish(false); }
     this.updateFx(dt); this.updateCamera(dt);
     this.saveT += dt; if (this.saveT > 10) { this.saveT = 0; persist(); }
   }
+  levelDone() { return this.spawned >= this.total && (!this.bossDef || this.bossDead) && !this.ents.some(e => !e.dead); }
+  onClear() {
+    const m = this.map;
+    this.state = 'clear';
+    this.portal = { x: m.spawn.x * T + 8, y: m.spawn.y * T + 8 };
+    this.banner = { lines: ['LEVEL CLEAR'], sub: 'Step into the portal by your start point', t: 3, kind: 'red' };
+    sfx('coin-d', 0.9); this.coins.forEach(c => { c.mag = true; });
+  }
+  canEnter() { return true; }
+  restart() { startLevel(this.li); }
+  hudLines(left) { return [`Level ${this.L}: ${this.def.name}`, this.state === 'clear' ? 'Find the portal' : `Monsters left: ${left}`]; }
   updateFx(dt) {
     for (const q of this.parts) { q.t -= dt; q.x += q.vx * dt; q.y += q.vy * dt; q.vx *= Math.pow(0.05, dt); q.vy *= Math.pow(0.05, dt); }
     this.parts = this.parts.filter(q => q.t > 0);
@@ -2329,6 +2402,7 @@ class Play {
     let mx = 0, my = 0, sp = e.speed;
     const active = this.state === 'play' && !p.dead && this.t > 1.6;
     if (!active) { e.moving = false; }
+    else if (this.steer) { [mx, my] = this.steer(e, dt); }
     else if (e.boss && e.charge > 0) {
       e.charge -= dt;
       if (e.charge > 0.5) { sp = 0; e.flash = (Math.floor(e.charge * 20) % 2) ? 0.05 : 0; }
@@ -2358,7 +2432,11 @@ class Play {
     e.moving = ml > 0.1;
     e.kbx *= Math.pow(0.002, dt); e.kby *= Math.pow(0.002, dt);
     const vx = mx * sp + e.kbx, vy = my * sp + e.kby;
-    if (D.ai === 'fly' && !e.boss) { e.x = clamp(e.x + vx * dt, 8, this.map.W * T - 8); e.y = clamp(e.y + vy * dt, 12, this.map.H * T - 4); }
+    if (D.ai === 'fly' && !e.boss) {
+      const fs = this.map.solid, nx = clamp(e.x + vx * dt, 8, this.map.W * T - 8), ny = clamp(e.y + vy * dt, 12, this.map.H * T - 4);
+      if (!(fs[this.cell(nx, e.y)] & 4)) e.x = nx;   // fences keep flyers out too
+      if (!(fs[this.cell(e.x, ny)] & 4)) e.y = ny;
+    }
     else this.move(e, vx * dt, vy * dt, e.boss ? 6 : 4);
     if (!active) return;
     // contact damage
@@ -2483,11 +2561,16 @@ class Play {
     // ground objects
     for (const c of this.chests) spr('tiles', c.gold ? (c.open ? 219 : 218) : (c.open ? 217 : 216), c.x - 8, c.y - 14);
     for (const md of this.meds) if (!md.used) spr('tiles', 222, md.x - 8, md.y - 14 + (md.drop ? Math.round(Math.sin(this.t * 4)) : 0));
-    if (this.portal) { const f = Math.floor(this.t * 6) % 2 ? 124 : 196; spr('tiles', f, this.portal.x - 8, this.portal.y - 8, { scale: 1 }); spr('tiles', f, this.portal.x - 12, this.portal.y - 12, { scale: 1.5, alpha: 0.35, rot: this.t * 2 }); }
+    if (this.portal) {
+      const f = Math.floor(this.t * 6) % 2 ? 124 : 196, shut = this.portalLocked && this.portalLocked();
+      spr('tiles', f, this.portal.x - 8, this.portal.y - 8, { scale: 1, alpha: shut ? 0.5 : 1 });
+      if (!shut) spr('tiles', f, this.portal.x - 12, this.portal.y - 12, { scale: 1.5, alpha: 0.35, rot: this.t * 2 });
+    }
     for (const c of this.coins) {
       ctx.fillStyle = 'rgba(71,50,75,0.25)'; ctx.fillRect(Math.round(c.x) - 2, Math.round(c.y) + 3, 4, 1);
       spr('tiles', 225, Math.round(c.x) - 8, Math.round(c.y - c.z) - 8);
     }
+    if (this.drawExtras) this.drawExtras();
     // entities, y-sorted
     const list = this.ents.slice(); list.push(p); if (this.ally) list.push(this.ally); if (this.opp) list.push(this.opp);
     list.sort((a, b) => a.y - b.y);
@@ -2576,9 +2659,9 @@ class Play {
     bar(92, 6, 18, 12, p.shield >= p.maxShield ? 1 : this.shieldT / this.shieldEvery(), 'blue', 1);
     spr('tiles', 225, 3, 19); ptext(String(SAVE.gold), 18, 20, 'A');
     // level info
-    const left = Math.max(0, this.total - this.killed) + (this.bossDef && !this.bossDead ? 1 : 0);
-    stextO(`Level ${this.L}: ${this.def.name}`, HW / 2, 10, 6.4, P.white, P.dark, 'center', 700, 2.2);
-    stextO(this.state === 'clear' ? 'Find the portal' : `Monsters left: ${left}`, HW / 2, 20, 5.4, P.yelL, P.dark, 'center', 700, 2);
+    const left = Math.max(0, this.total - this.killed) + (this.bossDef && !this.bossDead ? 1 : 0), [h1, h2] = this.hudLines(left);
+    stextO(h1, HW / 2, 10, 6.4, P.white, P.dark, 'center', 700, 2.2);
+    stextO(h2, HW / 2, 20, 5.4, P.yelL, P.dark, 'center', 700, 2);
     // minimap (round frame)
     this.drawMinimap(HW - 54, 4);
     // jobs
@@ -2617,6 +2700,7 @@ class Play {
       ctx.globalAlpha = 1;
     }
     if (this.coach && !this.paused && !this.result) Coach.drawRun(this, u, HW, HH);
+    if (this.hudExtra && !this.paused && !this.result) this.hudExtra(u, HW, HH);
     // touch hints / pause icon
     if (IN.touch) {
       ctx.globalAlpha = 0.6; btn('grey', HW - 22, HH - 24, 18, 18, false); stext('II', HW - 13, HH - 15.5, 6, P.dark, 'center', 700); ctx.globalAlpha = 1;
@@ -2641,6 +2725,7 @@ class Play {
     for (const c of this.chests) if (!c.open) dot(c.x, c.y, P.yel);
     for (const e of this.ents) if (!e.dead) dot(e.x, e.y, e.boss ? P.white : P.red, e.boss ? 3 : 2);
     if (this.portal) dot(this.portal.x, this.portal.y, P.purp, 3);
+    if (this.mapDots) this.mapDots(dot);
     ctx.restore();
     spr('ui', 74, cx - 8, cy - 8, { rot: p.aim + Math.PI / 2, scale: 0.75 });
   }
@@ -2658,7 +2743,7 @@ class Play {
     ptext('PAUSED', x + w / 2, y + 12, 'B', 'center');
     let any = false;
     any = this.overlayBtn('red', x + 30, y + 40, 100, 21, 'Resume', () => { this.paused = false; }) || any;
-    any = this.overlayBtn('grey', x + 30, y + 66, 100, 21, 'Restart level', () => startLevel(this.li)) || any;
+    any = this.overlayBtn('grey', x + 30, y + 66, 100, 21, this.restartLabel || 'Restart level', () => this.restart()) || any;
     any = this.overlayBtn('grey', x + 30, y + 92, 100, 21, 'Back to town', () => this.toTown()) || any;
     if (tut) any = this.overlayBtn('grey', x + 30, y + 118, 100, 21, 'Skip tutorial', () => { Coach.skip(); this.coach = false; this.paused = false; }) || any;
     stext('Gold you picked up is already saved.', x + w / 2, y + h - 22, 4.8, P.dark, 'center', 500);
@@ -2704,6 +2789,385 @@ function shortGoal(q) {
   }
   return '';
 }
+
+/* ==========================================================================
+   Daily challenge: one special run a day with its own rules, told by Mira.
+   The rules rotate day by day (the same for everyone on the same date), the
+   monsters are as tough as the player's own progress, and the first win of
+   the day pays gold, a little more on a streak.
+   ========================================================================== */
+const DAILY_TYPES = ['portal', 'rescue', 'survive', 'knife', 'speed'];
+const DAILY_SHIFT = 3; // lines the rotation up so Hold the Portal comes first (on 6 Oct 2026), then Rescue
+const DAILY = {
+  portal: { name: 'Hold the Portal', say: 'Monsters are after my portal!', rules: () => [
+    'The portal is here from the start, but it stays shut for you.',
+    'Monsters march straight at it. If one touches it, the challenge fails.',
+    'Defeat every monster, then step into the portal.'] },
+  rescue: { name: 'Rescue', say: 'A little squirrel is trapped behind the monster line!', rules: () => [
+    'A railing splits the map. You can slip through it, monsters cannot.',
+    'The squirrel waits in a pen deep in monster land. Walk in to pick it up.',
+    'Carry it back to the portal within 5 minutes.'] },
+  survive: { name: 'Last Stand', say: 'They will not stop coming. Can you keep standing?', rules: () => [
+    'Monsters keep coming, more and more of them.',
+    'Stay alive for 3 minutes.'] },
+  knife: { name: 'Knife Fight', say: 'No guns today. Just you and your knife.', rules: () => [
+    'Guns stay holstered. Your knife strikes by itself, or click to swing it.',
+    'Defeat every monster, then step into the portal.'] },
+  speed: { name: 'Speed Clear', say: 'How fast can you clean up Dustwell?', rules: () => [
+    `Defeat every monster within ${fmtTime(Daily.speedTime() * 1000)}.`,
+    'Then step into the portal: the clock stops once they are all gone.'] }
+};
+const Daily = {
+  /* local calendar day number, so the challenge changes at the player's own midnight */
+  today() { return Math.floor((Date.now() - new Date().getTimezoneOffset() * 60000) / 86400000); },
+  type(day = this.today()) { const n = DAILY_TYPES.length; return DAILY_TYPES[(((day + DAILY_SHIFT) % n) + n) % n]; },
+  level() { return clamp(SAVE.cleared.filter(Boolean).length, 1, LEVEL_N); },
+  speedTime() { return 40 + (10 + (this.level() >> 1)) * 5; },
+  doneToday() { return SAVE.daily.day === this.today(); },
+  streakIfWon() { const t = this.today(); return SAVE.daily.day === t ? SAVE.daily.streak : SAVE.daily.day === t - 1 ? SAVE.daily.streak + 1 : 1; },
+  reward() { return 30 + 6 * this.level() + Math.min(25, (this.streakIfWon() - 1) * 5); },
+  /* the first win of the day: returns the gold paid (0 when already claimed) */
+  complete() {
+    if (this.doneToday()) return 0;
+    const g = this.reward();
+    SAVE.daily.streak = this.streakIfWon(); SAVE.daily.day = this.today(); SAVE.daily.wins++;
+    SAVE.gold += g; SAVE.stats.goldEarned += g; persist();
+    return g;
+  },
+  msToMidnight() { const d = new Date(), n = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1); return n - d; },
+  untilNext() { const m = Math.ceil(this.msToMidnight() / 60000); return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`; }
+};
+function startDaily(type) { setScene(new Challenge(type || Daily.type())); }
+
+/* Mira explains today's rules */
+class DailyDialog extends MenuScene {
+  constructor() { super(); Coach.finish('daily'); }
+  key(k) { if (k === 'escape') popScene(this); if (k === 'enter') startDaily(); }
+  outside() { popScene(this); }
+  draw() {
+    dim(); this.begin();
+    const type = Daily.type(), C = DAILY[type], done = Daily.doneToday();
+    const x = 66, w = 328, h = 188, y = Math.round(129 - h / 2);
+    this.hit(x, y, w, h, () => {});
+    panel('grey', x, y, w, h);
+    ptext('DAILY CHALLENGE', x + w / 2, y + 10, 'B', 'center');
+    // Mira on her yellow tile, as in her job dialog
+    const sq = [3, 4, 5, 21, 22, 23, 39, 40, 41];
+    for (let k = 0; k < 9; k++) spr('ui', sq[k], x + 14 + (k % 3) * 16, y + 38 + Math.floor(k / 3) * 16);
+    spr('players', NPCS.cat.f + (this.t % 1.2 < 0.6 ? 0 : 1), x + 20, y + 44, { scale: 1.5 });
+    stext('Mira', x + 38, y + 96, 5.6, P.dark, 'center', 700);
+    // what she says
+    const tx = x + 74, tw = w - 88;
+    stext(C.name, tx, y + 42, 7.4, P.redD, 'left', 700);
+    let yy = y + 55;
+    for (const l of wrapText('“' + C.say + '”', tw, 5.8, 500)) { stext(l, tx, yy, 5.8, P.dark, 'left', 500); yy += 8.5; }
+    yy += 3;
+    C.rules().forEach((rule, k) => {
+      wrapText(rule, tw - 10, 5.4, 600).forEach((l, j) => { if (j === 0) stext((k + 1) + '.', tx, yy, 5.4, P.redD, 'left', 700); stext(l, tx + 9, yy, 5.4, P.dark, 'left', 600); yy += 7.6; });
+      yy += 2;
+    });
+    // reward and streak
+    const by = y + h - 64;
+    ctx.fillStyle = 'rgba(71,50,75,0.12)'; ctx.fillRect(x + 14, by, w - 28, 28);
+    spr('tiles', 225, x + 18, by + 6);
+    if (done) {
+      stext('Done for today! Streak: ' + SAVE.daily.streak + (SAVE.daily.streak === 1 ? ' day' : ' days'), x + 34, by + 9, 5.8, P.dark, 'left', 700);
+      stext(`A new challenge comes in ${Daily.untilNext()}. You can still play for fun.`, x + 34, by + 19, 5, P.dark, 'left', 500);
+    } else {
+      const s = Daily.streakIfWon();
+      stext(`Win it today for ${Daily.reward()} gold` + (s > 1 ? ` (streak day ${s})` : ''), x + 34, by + 9, 5.8, P.dark, 'left', 700);
+      stext(`Monsters are as tough as Level ${Daily.level()}. Try as often as you like.`, x + 34, by + 19, 5, P.dark, 'left', 500);
+    }
+    textButton(this, 'red', x + w / 2 - 70, y + h - 30, 64, 21, done ? 'Play again' : 'Start', () => startDaily());
+    textButton(this, 'grey', x + w / 2 + 6, y + h - 30, 64, 21, 'Back', () => popScene(this));
+    this.end();
+  }
+}
+
+/* the run itself: a normal run with today's rules plugged into the hooks Play offers */
+function dailySetup(type, day, Ld) {
+  const li = Ld - 1, themeLi = ((day % LEVEL_N) + LEVEL_N) % LEVEL_N, seed = 7001 + day * 31, key = `daily:${type}:${day}:${themeLi}`;
+  let pool = LEVELS[li].pool.filter(k => !(type === 'rescue' && k === 'hound')); // the rescued animal is a squirrel: no squirrel-looking monsters
+  if (!pool.length) pool = ['slime'];
+  const map = MAP_CACHE[key] || (MAP_CACHE[key] = type === 'rescue' ? genRescueMap(seed) : genMap(themeLi, seed));
+  const half = Ld >> 1, size = { portal: [10 + Ld, 4 + half], rescue: [Infinity, 6 + half], survive: [Infinity, 4], knife: [8 + half, 4 + half], speed: [10 + half, 10 + half] }[type];
+  return { li, map, def: { name: DAILY[type].name, pool }, total: size[0], cap: size[1] };
+}
+class Challenge extends Play {
+  constructor(type) {
+    const day = Daily.today(), Ld = Daily.level(), s = dailySetup(type, day, Ld);
+    super(s.li, { challenge: type, map: s.map, def: s.def, total: s.total, cap: s.cap, initial: 0,
+      banner: { lines: ['DAILY CHALLENGE'], sub: DAILY[type].name, t: 2.6, kind: 'red' } });
+    this.type = type; this.day = day; this.restartLabel = 'Restart';
+    const m = this.map, sx = m.spawn.x * T + 8, sy = m.spawn.y * T + 8;
+    if (type === 'portal' || type === 'rescue') this.portal = { x: sx, y: sy };
+    if (type === 'portal') {
+      this.pflow = new Int16Array(m.W * m.H); this.bfs(this.cell(sx, sy), this.pflow);
+      this.steer = (e, dt) => this.toPortal(e, dt);
+    }
+    if (type === 'rescue') { this.animal = { x: m.animal.x * T + 8, y: m.animal.y * T + 12, carried: false }; this.timeLeft = 300; }
+    if (type === 'survive') this.timeLeft = 180;
+    if (type === 'speed') this.timeLeft = Daily.speedTime();
+    if (type === 'knife') { this.p.wi = -1; this.p.ammo = 0; this.upg.final = 0; }
+    const first = type === 'rescue' ? this.cap : Math.min(this.total, Math.ceil(this.cap * 0.6));
+    for (let k = 0; k < first; k++) this.spawnEnemy(false);
+    this.computeFlow();
+  }
+  /* Hold the Portal: walkers follow the paths to the portal, flyers head straight for it */
+  toPortal(e, dt) {
+    const g = this.portal;
+    if (e.D.ai === 'fly') { e.wob += dt * 3; const dx = g.x - e.x, dy = g.y - e.y, d = Math.hypot(dx, dy) || 1; return [dx / d + Math.cos(e.wob) * 0.5, dy / d + Math.sin(e.wob * 1.3) * 0.5]; }
+    return this.flowDirOn(e, this.pflow, g.x, g.y);
+  }
+  spawnEnemy(fromDoor) {
+    if (this.type !== 'rescue' && this.type !== 'portal') { super.spawnEnemy(fromDoor); return; }
+    if (this.spawned >= this.total) return;
+    const m = this.map, W = m.W, pcx = (this.p.x / T) | 0, pcy = (this.p.y / T) | 0, far = (i, x, y) => Math.abs((i % W) - x) + Math.abs(((i / W) | 0) - y);
+    let cells;
+    if (this.type === 'rescue') { // the first wave guards the pen; the rest come from anywhere on the monster side
+      const a = m.animal;
+      cells = m.monsterFloor.filter(i => far(i, pcx, pcy) >= 7 && (fromDoor || (far(i, a.x, a.y) >= 4 && far(i, a.x, a.y) <= 9)));
+    } else { // far from the portal, not on top of the hero, and with a path to the portal
+      cells = m.floor.filter(i => far(i, m.spawn.x, m.spawn.y) >= 16 && far(i, pcx, pcy) >= 8 && this.pflow[i] >= 0);
+    }
+    if (!cells.length) return;
+    const i = cells[(R() * cells.length) | 0], e = this.addEnemy(pick(R, this.def.pool), (i % W) * T + 8, ((i / W) | 0) * T + 10);
+    this.spawned++; this.puff(e.x, e.y, 8, P.lav, 40);
+  }
+  ruleTick(dt) {
+    if (this.state !== 'play') return;
+    const p = this.p;
+    if (this.timeLeft != null) {
+      this.timeLeft = Math.max(0, this.timeLeft - dt);
+      if (this.timeLeft <= 0) { if (this.type === 'survive') this.finish(true); else this.fail('Time is up!'); return; }
+    }
+    if (this.type === 'survive') this.cap = 4 + (this.L >> 2) + Math.floor((180 - this.timeLeft) / 30);
+    if (this.type === 'portal') for (const e of this.ents) if (!e.dead && Math.hypot(e.x - this.portal.x, e.y - this.portal.y) < 12) { this.fail('A monster reached the portal!'); return; }
+    if (this.type === 'rescue') {
+      const a = this.animal, atPortal = Math.hypot(p.x - this.portal.x, p.y - this.portal.y) < 12;
+      if (!a.carried && !p.dead && Math.hypot(p.x - a.x, p.y - a.y) < 13) {
+        a.carried = true; sfx('coin-c', 0.8, 1.3);
+        this.banner = { lines: ['GOT IT!'], sub: 'Carry the squirrel back to the portal', t: 2.2, kind: 'red' };
+      }
+      if (!a.carried && atPortal && !this.hinted) Game.toast('Bring the squirrel first: its pen is far up north');
+      this.hinted = atPortal;
+    }
+  }
+  fail(reason) {
+    if (this.state !== 'play') return;
+    this.state = 'dead'; this.deadT = 1.8; this.failReason = reason;
+    this.banner = { lines: ['FAILED'], sub: reason, t: 2.2, kind: 'red' };
+    sfx('lose-a', 0.8);
+  }
+  levelDone() { return ['portal', 'knife', 'speed'].includes(this.type) && super.levelDone(); }
+  onClear() {
+    if (this.type === 'speed') this.timeLeft = null; // the clock stops once the field is clear
+    if (this.type !== 'portal') { super.onClear(); return; }
+    this.state = 'clear';
+    this.banner = { lines: ['PORTAL SAFE'], sub: 'Now step into the portal', t: 3, kind: 'red' };
+    sfx('coin-d', 0.9); this.coins.forEach(c => { c.mag = true; });
+  }
+  canEnter() { return this.type === 'rescue' ? this.animal.carried : this.type === 'portal' ? this.state === 'clear' : true; }
+  portalLocked() { return (this.type === 'portal' && this.state !== 'clear') || (this.type === 'rescue' && !this.animal.carried); }
+  equip(wi) {
+    if (this.type === 'knife' && wi >= 0) { if (!this.knifeSaid) Game.toast('Knife only today!'); this.knifeSaid = true; return; }
+    super.equip(wi);
+  }
+  autoShot(dt) { if (this.type !== 'knife') super.autoShot(dt); }
+  restart() { startDaily(this.type); }
+  hudLines(left) {
+    const clock = this.timeLeft != null ? '   ' + fmtTime(this.timeLeft * 1000) : '', clear = this.state === 'clear';
+    const sub = {
+      portal: clear ? 'Portal safe: step in!' : `Guard the portal. Monsters left: ${left}`,
+      rescue: this.animal && this.animal.carried ? 'Bring the squirrel to the portal' : 'Find the squirrel in the pen up north',
+      survive: 'Stay alive',
+      knife: clear ? 'Find the portal' : `Knife only. Monsters left: ${left}`,
+      speed: clear ? 'Find the portal' : `Monsters left: ${left}`
+    }[this.type];
+    return [`Daily: ${DAILY[this.type].name}${clock}`, sub];
+  }
+  /* the squirrel in its pen (picked up, it rides on the hero's head) */
+  drawExtras() {
+    if (this.type !== 'rescue' || this.animal.carried) return;
+    const a = this.animal;
+    ctx.fillStyle = 'rgba(71,50,75,0.25)'; ctx.beginPath(); ctx.ellipse(a.x, a.y + 3, 6, 2.2, 0, 0, TAU); ctx.fill();
+    spr('players', 4 + (Math.floor(this.t * 1.6) % 2), Math.round(a.x) - 12, Math.round(a.y) - 20);
+    spr('ui', 60, Math.round(a.x) - 8, Math.round(a.y) - 40 + Math.round(Math.sin(this.t * 5)));
+  }
+  drawPlayer() {
+    super.drawPlayer();
+    const p = this.p;
+    if (this.type === 'rescue' && this.animal.carried && !p.dead) spr('players', 4 + (p.moving ? Math.floor(p.walk * 6) % 2 : 0), Math.round(p.x) - 12, Math.round(p.y) - 36 + Math.round(Math.sin(this.t * 8)));
+  }
+  mapDots(dot) { if (this.type === 'rescue' && !this.animal.carried) dot(this.animal.x, this.animal.y, P.teal, 3); }
+  /* an arrow toward the goal when it is off screen */
+  hudExtra(u, HW, HH) {
+    if (this.state === 'dead') return;
+    let tgt = null;
+    if (this.type === 'rescue') tgt = this.animal.carried ? this.portal : { x: this.animal.x, y: this.animal.y - 10 };
+    else if (this.portal && (this.type !== 'portal' || this.state === 'clear')) tgt = this.portal;
+    if (!tgt) return;
+    const k = this.view().Z / u, sx = (tgt.x - this.cam.x) * k, sy = (tgt.y - this.cam.y) * k;
+    if (sx < 20 || sy < 50 || sx > HW - 20 || sy > HH - 60) Coach.pointAt(this, u, HW, HH, tgt, this.t);
+  }
+  finish(won) {
+    if (this.result) return;
+    if (won && this.coins.length) { this.gainGold(this.coins.length); this.coins = []; }
+    const reward = won && this.day === Daily.today() ? Daily.complete() : 0;
+    this.result = { won, reward, streak: SAVE.daily.streak, reason: won ? '' : this.failReason || 'You were knocked out.' };
+    if (won) { sfx('coin-d', 0.9); sfx('jump-c', 0.6, 1.2); }
+    cv.style.cursor = 'default'; persist();
+  }
+  resultDefault() { if (this.result.won) this.toTown(); else this.restart(); }
+  drawResult() {
+    dim(); menuXf();
+    const r = this.result, x = 120, y = 40, w = 220, h = 172;
+    panel('grey', x, y, w, h);
+    panel('red', x + 20, y - 10, w - 40, 30);
+    ptext(r.won ? 'CHALLENGE WON' : 'FAILED', x + w / 2, y - 1, 'B', 'center');
+    const rows = [['Challenge', DAILY[this.type].name], ['Gold collected', '+' + this.goldRun], ['Monsters defeated', this.killsRun], ['Time', fmtTime(this.time * 1000)]];
+    rows.forEach((row, k) => { stext(row[0], x + 22, y + 34 + k * 11, 5.6, P.dark, 'left', 500); stext(String(row[1]), x + w - 22, y + 34 + k * 11, 5.6, P.dark, 'right', 700); });
+    const note = r.won ? (r.reward ? `Daily reward: +${r.reward} gold. Streak: ${r.streak} ${r.streak === 1 ? 'day' : 'days'}` : 'Today’s reward is already yours. Nice run!') : r.reason;
+    stext(note, x + w / 2, y + 86, 5.8, P.redD, 'center', 700);
+    if (!r.won) stext('Try again as often as you like today.', x + w / 2, y + 96, 5.2, P.dark, 'center', 500);
+    let any = false;
+    any = this.overlayBtn('red', x + 16, y + h - 54, 90, 21, r.won ? 'Play again' : 'Retry', () => this.restart()) || any;
+    any = this.overlayBtn('grey', x + w - 106, y + h - 54, 90, 21, 'Back to town', () => this.toTown()) || any;
+    cv.style.cursor = any ? 'pointer' : 'default';
+  }
+}
+
+/* ==========================================================================
+   Save data: take progress to another device or browser (a save code or a
+   file) and start over. A save code is the save as JSON in base64url plus a
+   checksum, so a cut-off or damaged code is caught before it replaces anything.
+   ========================================================================== */
+const SaveCode = {
+  prefix: 'DWS1',
+  /* cyrb53, a quick 53-bit string hash: plenty to notice a damaged code */
+  hash(str) {
+    let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+    for (let i = 0; i < str.length; i++) { const ch = str.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+  },
+  toB64(bytes) {
+    let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  },
+  fromB64(t) { const s = atob(t.replace(/-/g, '+').replace(/_/g, '/')), b = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i); return b; },
+  make() { const json = JSON.stringify(SAVE); return `${this.prefix}.${this.toB64(new TextEncoder().encode(json))}.${this.hash(json + '|dustwell')}`; },
+  /* the save inside a code, or an Error the player can read */
+  read(text) {
+    const t = String(text || '').replace(/\s+/g, ''), parts = t.split('.');
+    if (!t.startsWith(this.prefix + '.')) throw new Error('That is not a Dustwell save code.');
+    if (parts.length !== 3) throw new Error('The code is cut off. Copy all of it.');
+    let json;
+    try { json = new TextDecoder().decode(this.fromB64(parts[1])); } catch (e) { throw new Error('The code is cut off. Copy all of it.'); }
+    if (this.hash(json + '|dustwell') !== parts[2]) throw new Error('The code is damaged or cut off. Copy all of it.');
+    const d = JSON.parse(json);
+    if (!d || typeof d.gold !== 'number' || !Array.isArray(d.owned) || !Array.isArray(d.cleared)) throw new Error('That code does not hold a save.');
+    return d;
+  },
+  summary(d) {
+    const lv = d.cleared.filter(Boolean).length, guns = d.owned.filter(Boolean).length;
+    return `${d.gold} gold, ${lv} ${lv === 1 ? 'level' : 'levels'}, ${guns} ${guns === 1 ? 'gun' : 'guns'}`;
+  },
+  fileName() { const d = new Date(), p = n => String(n).padStart(2, '0'); return `Dustwell save ${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}.txt`; },
+  /* ask before replacing this save; then reload so duels, admin changes and jobs all start from the loaded save */
+  offer(text) {
+    let d;
+    try { d = this.read(text); } catch (e) { sfx('error-a'); Game.toast(e.message); return false; }
+    pushScene(new Confirm('Load this save?', [this.summary(d), 'It replaces the progress here.'], 'Load', () => {
+      SAVE = normalizeSave(d); SAVE.savedAt = Date.now(); persist();
+      Game.toast('Save loaded'); setTimeout(() => location.reload(), 600);
+    }));
+    return true;
+  },
+  copy() {
+    const code = this.make(), byHand = () => pushScene(new SaveCodeView(code));
+    try { navigator.clipboard.writeText(code).then(() => Game.toast('Save code copied: paste it into the game on your other device'), byHand); } catch (e) { byHand(); }
+  },
+  download() {
+    try {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([this.make() + '\n'], { type: 'text/plain' }));
+      a.download = this.fileName(); document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      Game.toast('Save file downloaded');
+    } catch (e) { Game.toast('The download was blocked. Use Copy save code instead.'); }
+  },
+  load() {
+    const input = document.createElement('input');
+    input.type = 'file'; input.accept = '.txt,text/plain';
+    input.onchange = () => { const f = input.files && input.files[0]; if (f) f.text().then(t => this.offer(t), () => Game.toast('Could not read that file')); };
+    input.click();
+  }
+};
+
+class SaveDialog extends MenuScene {
+  constructor() { super(); this.confirmT = 0; }
+  key(k) { if (k === 'escape') popScene(this); }
+  outside() { popScene(this); }
+  update(dt) { super.update(dt); this.confirmT = Math.max(0, this.confirmT - dt); }
+  draw() {
+    dim(); this.begin();
+    const x = 100, y = 28, w = 260, h = 202;
+    this.hit(x, y, w, h, () => {});
+    panel('grey', x, y, w, h);
+    ptext('SAVE DATA', x + w / 2, y + 10, 'B', 'center');
+    stext('This save: ' + SaveCode.summary(SAVE), x + w / 2, y + 36, 5.8, P.dark, 'center', 700);
+    const L = x + 18, R2 = x + 134, head = (t, yy) => stext(t, L, yy, 5.4, P.redD, 'left', 700);
+    head('Take it to another device or browser', y + 52);
+    textButton(this, 'grey', L, y + 59, 108, 19, 'Copy save code', () => SaveCode.copy());
+    if (Shortcut.site()) textButton(this, 'grey', R2, y + 59, 108, 19, 'Download file', () => SaveCode.download());
+    head('Bring progress here from another device', y + 94);
+    textButton(this, 'grey', L, y + 101, 108, 19, 'Paste code', () => pushScene(new PvpTextDialog({
+      title: 'PASTE CODE', hint: 'Paste the code from Options > Save data on the other device.', maxLen: 200000, ok: 'Load', onSave: t => SaveCode.offer(t)
+    })));
+    textButton(this, 'grey', R2, y + 101, 108, 19, 'Load file', () => SaveCode.load());
+    head('Start over', y + 136);
+    textButton(this, this.confirmT > 0 ? 'red' : 'grey', L, y + 143, 108, 19, this.confirmT > 0 ? 'Confirm wipe' : 'Reset progress', () => {
+      if (this.confirmT <= 0) { this.confirmT = 3; return; }
+      const keep = { settings: SAVE.settings, pvpUid: SAVE.pvpUid, pvpName: SAVE.pvpName, pvp: SAVE.pvp, adminSeq: SAVE.adminSeq };
+      SAVE = Object.assign(defaultSave(), keep); persist(); this.confirmT = 0; Game.toast('Progress reset. Welcome back to Dustwell.');
+    });
+    if (this.confirmT > 0) stext('Click again to erase gold, guns and levels', R2, y + 152.5, 4.6, P.redD, 'left', 600);
+    textButton(this, 'red', x + w / 2 - 32, y + h - 28, 64, 21, 'Done', () => popScene(this));
+    this.end();
+  }
+}
+
+/* when the browser will not copy for us: show the code so the player can select and copy it */
+class SaveCodeView extends MenuScene {
+  constructor(code) {
+    super();
+    const el = this.el = document.createElement('textarea');
+    el.id = 'save-code'; el.readOnly = true; el.value = code; el.spellcheck = false;
+    Object.assign(el.style, { position: 'fixed', zIndex: 5, boxSizing: 'border-box', border: '2px solid #47324b', borderRadius: '0', background: '#ffffff',
+      color: '#47324b', padding: '6px', fontFamily: 'ui-monospace, Menlo, Consolas, monospace', resize: 'none', outline: 'none', wordBreak: 'break-all' });
+    el.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); this.close(); } });
+    document.body.appendChild(el);
+    setTimeout(() => { el.focus(); el.select(); }, 0);
+  }
+  close() { this.el.remove(); popScene(this); }
+  key(k) { if (k === 'escape') this.close(); }
+  draw() {
+    dim(); this.begin();
+    const x = 90, y = 40, w = 280, h = 172;
+    this.hit(x, y, w, h, () => { this.el.focus(); this.el.select(); });
+    panel('grey', x, y, w, h);
+    ptext('SAVE CODE', x + w / 2, y + 10, 'B', 'center');
+    stext('Copying was blocked here: select the whole code and copy it.', x + w / 2, y + 33, 4.8, P.dark, 'center', 500);
+    const bx = x + 16, by = y + 42, bw = w - 32, bh = 92, st = this.el.style;
+    st.left = (M.ox + bx * M.s) / DPR + 'px'; st.top = (M.oy + by * M.s) / DPR + 'px';
+    st.width = bw * M.s / DPR + 'px'; st.height = bh * M.s / DPR + 'px'; st.fontSize = Math.max(10, 4.4 * M.s / DPR) + 'px';
+    textButton(this, 'red', x + w / 2 - 32, y + h - 28, 64, 21, 'Done', () => this.close());
+    this.end();
+  }
+}
+setInterval(() => { const el = document.getElementById('save-code'); if (el && !SCENES.some(sc => sc instanceof SaveCodeView)) el.remove(); }, 250);
 
 /* ==========================================================================
    PvP: lobby, challenges and 1v1 duels.

@@ -19,9 +19,10 @@ const FN = {
 const MAP_CACHE = {};
 function getMap(li) { if (!MAP_CACHE[li]) MAP_CACHE[li] = genMap(li); return MAP_CACHE[li]; }
 
-function genMap(li) {
+/* seed: daily challenges pass their own, so the same level theme gets a fresh layout every day */
+function genMap(li, seed) {
   const L = li + 1, def = LEVELS[li], th = def.th;
-  const r = rng(1009 + L * 7919);
+  const r = rng(seed != null ? seed : 1009 + L * 7919);
   const W = def.w, H = def.h, N = W * H;
   const g0 = new Int16Array(N), g1 = new Int16Array(N).fill(-1), g2 = new Int16Array(N).fill(-1), g3 = new Int16Array(N).fill(-1);
   const solid = new Uint8Array(N), hgt = new Uint8Array(N), occ = new Uint8Array(N), pocc = new Uint8Array(N);
@@ -274,6 +275,71 @@ function genMap(li) {
   for (let k = 0; k < 1 + (L >= 8 ? 1 : 0); k++) { const i = takeFrom(floor.filter(j => far(j, 8))); if (i >= 0) medkits.push({ x: i % W, y: (i / W) | 0 }); }
   const spawnPts = doorSpawns.filter(p => inb(p.x, p.y) && reach[id(p.x, p.y)] && !solid[id(p.x, p.y)]);
   return { L, W, H, g0, g1, g2, g3, solid, hgt, reach, floor, spawn, spawnPts, chests, medkits, shadows, canvas: null, over: null };
+}
+
+/* Daily "Rescue" arena. A red railing runs across the map: the hero slips through it, monsters cannot
+   (solid bit 4). The start and the exit portal sit on the safe strip at the bottom; the little squirrel
+   waits in a chain-fence pen near the top, deep in monster land. */
+function genRescueMap(seed) {
+  const r = rng(seed), W = 40, H = 44, N = W * H, fy = H - 10;
+  const g0 = new Int16Array(N), g1 = new Int16Array(N).fill(-1), g2 = new Int16Array(N).fill(-1), g3 = new Int16Array(N).fill(-1);
+  const solid = new Uint8Array(N), hgt = new Uint8Array(N), keep = new Uint8Array(N);
+  const id = (x, y) => y * W + x, inb = (x, y) => x >= 0 && y >= 0 && x < W && y < H;
+  const mark = (x0, y0, w, h) => { for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) if (inb(x, y)) keep[id(x, y)] = 1; };
+  for (let i = 0; i < N; i++) g0[i] = r() < 0.13 ? 65 : 64;
+  // ground patches for colour
+  for (let k = 0; k < 9; k++) {
+    const S = PS[pick(r, ['p', 't', 'd', 'd'])], w = rint(r, 3, 7), h = rint(r, 3, 5), x0 = rint(r, 1, W - w - 1), y0 = rint(r, 1, H - h - 1);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const col = x === 0 ? 0 : x === w - 1 ? 2 : 1, row = y === 0 ? 0 : y === h - 1 ? 2 : 1;
+      g0[id(x0 + x, y0 + y)] = row === 1 && col === 1 && r() < 0.12 ? S[9] : S[row * 3 + col];
+    }
+  }
+  // the railing across the whole map
+  for (let x = 0; x < W; x++) { const i = id(x, fy); g1[i] = 142; solid[i] = 4; }
+  mark(0, fy - 1, W, 3);
+  // the pen around the squirrel (no gate: the hero slips through, monsters stay out)
+  const pw = 6, ph = 5, px0 = rint(r, 4, W - pw - 4), py0 = rint(r, 4, 7); // a few rows down, so the HUD never covers it
+  for (let y = 0; y < ph; y++) for (let x = 0; x < pw; x++) {
+    if (x > 0 && y > 0 && x < pw - 1 && y < ph - 1) continue;
+    const i = id(px0 + x, py0 + y);
+    g1[i] = y === 0 ? (x === 0 ? 177 : x === pw - 1 ? 179 : 178) : y === ph - 1 ? (x === 0 ? 213 : x === pw - 1 ? 215 : 214) : (x === 0 ? 195 : 197);
+    solid[i] = 4;
+  }
+  mark(px0 - 2, py0 - 2, pw + 4, ph + 4);
+  const animal = { x: px0 + 2, y: py0 + 2 }, spawn = { x: W >> 1, y: H - 5 };
+  mark(spawn.x - 3, spawn.y - 3, 7, 7);
+  // cover: plenty on the monster side, a little on the safe strip
+  const decor = (n, y0, y1) => {
+    for (let k = 0; k < n; k++) {
+      const x = rint(r, 1, W - 2), y = rint(r, y0, y1), i = id(x, y);
+      if (keep[i] || solid[i] || g2[i] >= 0) continue;
+      const q = r();
+      g2[i] = q < 0.4 ? (r() < 0.6 ? 63 : 81) : q < 0.75 ? pick(r, [76, 82, 83]) : pick(r, [62, 80, 57]);
+      solid[i] = 3; keep[i] = 1;
+    }
+  };
+  decor(46, 1, fy - 2); decor(6, fy + 2, H - 2);
+  for (let k = 0; k < 10; k++) { const x = rint(r, 1, W - 2), y = rint(r, 1, H - 2), i = id(x, y); if (!keep[i] && g2[i] < 0 && !solid[i]) g2[i] = 58; }
+  // where the hero can walk (fences do not stop the hero)
+  const reach = new Uint8Array(N), stack = [id(spawn.x, spawn.y)]; reach[stack[0]] = 1;
+  while (stack.length) {
+    const i = stack.pop(), x = i % W, y = (i / W) | 0;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx, ny = y + dy; if (!inb(nx, ny)) continue;
+      const j = id(nx, ny); if (reach[j] || (solid[j] & 1)) continue;
+      reach[j] = 1; stack.push(j);
+    }
+  }
+  const floor = []; for (let i = 0; i < N; i++) if (reach[i] && !solid[i] && (g2[i] < 0 || g2[i] === 58)) floor.push(i);
+  const inPen = i => { const x = i % W, y = (i / W) | 0; return x >= px0 - 1 && x <= px0 + pw && y >= py0 - 1 && y <= py0 + ph; };
+  const monsterFloor = floor.filter(i => ((i / W) | 0) < fy - 1 && !inPen(i));
+  const take = list => { if (!list.length) return null; const i = list[Math.floor(r() * list.length)]; return { x: i % W, y: (i / W) | 0 }; };
+  const chests = [], medkits = [];
+  for (let k = 0; k < 2; k++) { const c = take(monsterFloor.filter(i => { const y = (i / W) | 0; return y > py0 + ph + 3 && y < fy - 4; })); if (c) chests.push({ x: c.x, y: c.y, gold: false }); }
+  const m1 = take(monsterFloor.filter(i => ((i / W) | 0) < fy - 8)); if (m1) medkits.push(m1);
+  const m2 = take(floor.filter(i => { const x = i % W, y = (i / W) | 0; return y > fy + 1 && Math.abs(x - spawn.x) > 5; })); if (m2) medkits.push(m2);
+  return { L: 1, W, H, g0, g1, g2, g3, solid, hgt, reach, floor, spawn, spawnPts: [], chests, medkits, shadows: [], canvas: null, over: null, fenceY: fy, pen: { x0: px0, y0: py0, w: pw, h: ph }, animal, monsterFloor };
 }
 
 function tileImg(i) { const s = SHEET.tiles; return [(i % 18) * 16, Math.floor(i / 18) * 16]; }

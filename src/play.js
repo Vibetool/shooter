@@ -7,18 +7,18 @@ const angDiff = (a, b) => { let d = (a - b) % TAU; if (d > Math.PI) d -= TAU; if
 
 class Play {
   constructor(li, opts = {}) {
-    this.li = li; this.L = li + 1; this.def = LEVELS[li];
-    const m = this.map = renderMap(getMap(li));
+    this.li = li; this.L = li + 1; this.def = opts.def || LEVELS[li]; this.opts = opts;
+    const m = this.map = renderMap(opts.map || getMap(li));
     this.t = 0; this.state = 'play'; this.time = 0;
     this.ents = []; this.bullets = []; this.ebullets = []; this.coins = []; this.parts = []; this.nums = [];
     this.chests = m.chests.map(c => ({ x: c.x * T + 8, y: c.y * T + 12, gold: c.gold, open: false }));
     this.meds = m.medkits.map(c => ({ x: c.x * T + 8, y: c.y * T + 12, used: false }));
     const wi = SAVE.owned[SAVE.equipped] ? SAVE.equipped : -1;
     this.p = { x: m.spawn.x * T + 8, y: m.spawn.y * T + 10, vx: 0, vy: 0, h: 0, ramp: false, hp: 10, maxHp: 10, inv: 1, aim: 0, wi,
-      ammo: wi >= 0 ? WEAPONS[wi].mag : 0, reload: 0, cd: 0, knifeT: 0, knifeCd: 0, autoKnifeCd: 0, knifeA: 0, autoShotCd: 1, dashT: 0, dashCd: 0, dashX: 0, dashY: 0, walk: 0, moving: false, dead: false, scale: 1, shield: 1, maxShield: 1 };
-    this.total = levelCount(this.L); this.spawned = 0; this.killed = 0; this.spawnT = 1.5;
-    this.bossDef = BOSSES[this.L] || null; this.bossSpawned = false; this.bossEnt = null; this.bossDead = false;
-    this.cap = 4 + Math.floor(this.L * 0.6);
+      ammo: wi >= 0 ? WEAPONS[wi].mag : 0, reload: 0, cd: 0, knifeT: 0, knifeCd: 0, autoKnifeCd: 0, knifeA: 0, autoShotCd: 1, dashT: 0, dashCd: 0, dashX: 0, dashY: 0, walk: 0, moving: false, dead: false, scale: 1, shield: 1, maxShield: 1, hero: true };
+    this.total = opts.total != null ? opts.total : levelCount(this.L); this.spawned = 0; this.killed = 0; this.spawnT = 1.5;
+    this.bossDef = opts.challenge ? null : BOSSES[this.L] || null; this.bossSpawned = false; this.bossEnt = null; this.bossDead = false;
+    this.cap = opts.cap || 4 + Math.floor(this.L * 0.6);
     this.hits = 0; this.goldRun = 0; this.killsRun = 0; this.chestsRun = 0;
     this.cam = { x: 0, y: 0 }; this.shake = 0;
     this.flow = new Int16Array(m.W * m.H); this.flowT = 0; this.flowCell = -1; this.q = new Int32Array(m.W * m.H);
@@ -26,23 +26,23 @@ class Play {
     this.upg = { regen: SAVE.upg.regen, fighter: SAVE.upg.fighter, skill: SAVE.upg.skill, final: SAVE.upg.final };
     this.dz = { ammo: WEAPONS[5].mag, reload: 0, cd: 0.5, aura: 0 };
     this.regenT = 0; this.skillT = 0; this.shieldT = 0; this.ally = null;
-    this.banner = { lines: ['LEVEL ' + this.L], sub: this.def.name, t: 2.2, kind: 'red' };
+    this.banner = opts.banner || { lines: ['LEVEL ' + this.L], sub: this.def.name, t: 2.2, kind: 'red' };
     this.paused = false; this.result = null; this.hot = []; this.saveT = 0;
     this.tMove = null; this.tAim = null;
     if (opts.pvp) { this.chests = []; this.meds = []; this.banner = null; this.upg = { regen: 0, fighter: 0, skill: 0, final: 0 }; this.snapCam(); return; }
     SAVE.stats.runs++; persist();
     // tutorial: Mira's hints for this run (see Coach in ui.js)
-    Coach.finish('welcome'); this.coach = Coach.pending(); this.coachStep = null; this.coachT = 0; this.coachMoved = 0; this.coachShots = 0;
+    Coach.finish('welcome'); this.coach = !opts.challenge && Coach.pending(); this.coachStep = null; this.coachT = 0; this.coachMoved = 0; this.coachShots = 0;
     Game.toast('Shield ready: it blocks 1 damage and recharges');
     Music.intensity = 1;
-    const initial = Math.min(this.total, Math.ceil(this.cap * 0.6));
+    const initial = opts.initial != null ? opts.initial : Math.min(this.total, Math.ceil(this.cap * 0.6));
     for (let k = 0; k < initial; k++) this.spawnEnemy(false);
     this.computeFlow(); this.snapCam();
     sfx('jump-c', 0.6);
   }
   /* ---------- helpers ---------- */
   cell(x, y) { const m = this.map; const cx = clamp(Math.floor(x / T), 0, m.W - 1), cy = clamp(Math.floor(y / T), 0, m.H - 1); return cy * m.W + cx; }
-  passable(i, e) { const m = this.map; if (m.solid[i] & 1) return false; const h = m.hgt[i]; return h === 2 || e.ramp || h === e.h; }
+  passable(i, e) { const m = this.map; if ((m.solid[i] & 1) || ((m.solid[i] & 4) && !e.hero && !e.ally)) return false; const h = m.hgt[i]; return h === 2 || e.ramp || h === e.h; }
   blockedAt(x, y, e, r) {
     const m = this.map;
     for (let k = 0; k < 4; k++) {
@@ -69,15 +69,16 @@ class Play {
     return true;
   }
   computeFlow() { this.flowCell = this.bfs(this.cell(this.p.x, this.p.y), this.flow); }
-  /* walking distance (in cells) from one cell to every reachable cell, honoring heights and ramps */
-  bfs(s, f) {
-    const m = this.map, W = m.W, q = this.q; f.fill(-1);
+  /* walking distance (in cells) from one cell to every reachable cell, honoring heights and ramps;
+     fences block it unless the walker may cross them (the fighter) */
+  bfs(s, f, crossFences) {
+    const m = this.map, W = m.W, q = this.q, stop = crossFences ? 1 : 5; f.fill(-1);
     f[s] = 0; let qh = 0, qt = 0; q[qt++] = s;
     while (qh < qt) {
       const i = q[qh++], x = i % W, ha = m.hgt[i];
       const nb = [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, i - W, i + W];
       for (const j of nb) {
-        if (j < 0 || j >= f.length || f[j] >= 0 || (m.solid[j] & 1)) continue;
+        if (j < 0 || j >= f.length || f[j] >= 0 || (m.solid[j] & stop)) continue;
         const hb = m.hgt[j]; if (!(ha === hb || ha === 2 || hb === 2)) continue;
         f[j] = f[i] + 1; q[qt++] = j;
       }
@@ -265,7 +266,7 @@ class Play {
   }
   spawnAlly() {
     const p = this.p;
-    this.ally = { x: p.x, y: p.y, h: p.h, ramp: p.ramp, face: 1, anim: 0, moving: false, target: null, cd: 0.5, swingT: 0, swingA: 0, flowT: 0, flowCell: -1, lost: 0, chase: 0 };
+    this.ally = { x: p.x, y: p.y, h: p.h, ramp: p.ramp, face: 1, anim: 0, moving: false, target: null, cd: 0.5, swingT: 0, swingA: 0, flowT: 0, flowCell: -1, lost: 0, chase: 0, ally: true };
     this.aflow = new Int16Array(this.map.W * this.map.H);
   }
   /* the fighter picks a random monster, runs to it and swings its orange knife; monsters ignore it */
@@ -277,7 +278,7 @@ class Play {
     let tx = p.x - 14, ty = p.y, f = this.flow;
     if (a.target) {
       const e = a.target, tc = this.cell(e.x, e.y); tx = e.x; ty = e.y;
-      a.flowT -= dt; if (a.flowT <= 0 || tc !== a.flowCell) { a.flowCell = this.bfs(tc, this.aflow); a.flowT = 0.4; }
+      a.flowT -= dt; if (a.flowT <= 0 || tc !== a.flowCell) { a.flowCell = this.bfs(tc, this.aflow, true); a.flowT = 0.4; }
       f = this.aflow;
       if (f[this.cell(a.x, a.y)] < 0 && (a.lost += dt) > 0.5) a.target = null;
     }
@@ -361,6 +362,7 @@ class Play {
     if (this.banner) { this.banner.t -= dt; if (this.banner.t <= 0) this.banner = null; }
     this.controlPlayer(dt);
     if (this.coach) Coach.run(this, dt);
+    if (this.ruleTick) this.ruleTick(dt); // daily challenge rules
     // flow field
     this.flowT -= dt; const pc = this.cell(p.x, p.y);
     if (this.flowT <= 0 || pc !== this.flowCell) { this.computeFlow(); this.flowT = 0.4; }
@@ -370,13 +372,7 @@ class Play {
       const alive = this.ents.filter(e => !e.dead && !e.boss).length;
       if (this.spawnT <= 0 && this.spawned < this.total && alive < this.cap) { this.spawnEnemy(true); this.spawnT = Math.max(0.9, 2.6 - this.L * 0.06) * (0.7 + R() * 0.6); }
       if (this.bossDef && !this.bossSpawned && this.killed >= Math.ceil(this.total / 2)) this.spawnBoss();
-      const done = this.spawned >= this.total && (!this.bossDef || this.bossDead) && !this.ents.some(e => !e.dead);
-      if (done) {
-        this.state = 'clear';
-        this.portal = { x: m.spawn.x * T + 8, y: m.spawn.y * T + 8 };
-        this.banner = { lines: ['LEVEL CLEAR'], sub: 'Step into the portal by your start point', t: 3, kind: 'red' };
-        sfx('coin-d', 0.9); this.coins.forEach(c => { c.mag = true; });
-      }
+      if (this.state === 'play' && this.levelDone()) this.onClear();
     }
     // enemies
     for (const e of this.ents) this.updEnemy(e, dt);
@@ -433,11 +429,22 @@ class Play {
       if (Math.abs(p.x - md.x) < 10 && Math.abs(p.y - md.y) < 10) { md.used = true; p.hp = Math.min(p.maxHp, p.hp + 4); sfx('jump-a', 0.7, 1.3); this.spark(md.x, md.y - 8, 10, P.teal); Game.toast('+4 health'); }
     }
     // portal
-    if (this.portal && !p.dead && Math.hypot(p.x - this.portal.x, p.y - this.portal.y) < 10) this.finish(true);
+    if (this.portal && !p.dead && Math.hypot(p.x - this.portal.x, p.y - this.portal.y) < 10 && this.canEnter()) this.finish(true);
     if (this.state === 'dead') { this.deadT -= dt; if (this.deadT <= 0 && !this.result) this.finish(false); }
     this.updateFx(dt); this.updateCamera(dt);
     this.saveT += dt; if (this.saveT > 10) { this.saveT = 0; persist(); }
   }
+  levelDone() { return this.spawned >= this.total && (!this.bossDef || this.bossDead) && !this.ents.some(e => !e.dead); }
+  onClear() {
+    const m = this.map;
+    this.state = 'clear';
+    this.portal = { x: m.spawn.x * T + 8, y: m.spawn.y * T + 8 };
+    this.banner = { lines: ['LEVEL CLEAR'], sub: 'Step into the portal by your start point', t: 3, kind: 'red' };
+    sfx('coin-d', 0.9); this.coins.forEach(c => { c.mag = true; });
+  }
+  canEnter() { return true; }
+  restart() { startLevel(this.li); }
+  hudLines(left) { return [`Level ${this.L}: ${this.def.name}`, this.state === 'clear' ? 'Find the portal' : `Monsters left: ${left}`]; }
   updateFx(dt) {
     for (const q of this.parts) { q.t -= dt; q.x += q.vx * dt; q.y += q.vy * dt; q.vx *= Math.pow(0.05, dt); q.vy *= Math.pow(0.05, dt); }
     this.parts = this.parts.filter(q => q.t > 0);
@@ -516,6 +523,7 @@ class Play {
     let mx = 0, my = 0, sp = e.speed;
     const active = this.state === 'play' && !p.dead && this.t > 1.6;
     if (!active) { e.moving = false; }
+    else if (this.steer) { [mx, my] = this.steer(e, dt); }
     else if (e.boss && e.charge > 0) {
       e.charge -= dt;
       if (e.charge > 0.5) { sp = 0; e.flash = (Math.floor(e.charge * 20) % 2) ? 0.05 : 0; }
@@ -545,7 +553,11 @@ class Play {
     e.moving = ml > 0.1;
     e.kbx *= Math.pow(0.002, dt); e.kby *= Math.pow(0.002, dt);
     const vx = mx * sp + e.kbx, vy = my * sp + e.kby;
-    if (D.ai === 'fly' && !e.boss) { e.x = clamp(e.x + vx * dt, 8, this.map.W * T - 8); e.y = clamp(e.y + vy * dt, 12, this.map.H * T - 4); }
+    if (D.ai === 'fly' && !e.boss) {
+      const fs = this.map.solid, nx = clamp(e.x + vx * dt, 8, this.map.W * T - 8), ny = clamp(e.y + vy * dt, 12, this.map.H * T - 4);
+      if (!(fs[this.cell(nx, e.y)] & 4)) e.x = nx;   // fences keep flyers out too
+      if (!(fs[this.cell(e.x, ny)] & 4)) e.y = ny;
+    }
     else this.move(e, vx * dt, vy * dt, e.boss ? 6 : 4);
     if (!active) return;
     // contact damage
@@ -670,11 +682,16 @@ class Play {
     // ground objects
     for (const c of this.chests) spr('tiles', c.gold ? (c.open ? 219 : 218) : (c.open ? 217 : 216), c.x - 8, c.y - 14);
     for (const md of this.meds) if (!md.used) spr('tiles', 222, md.x - 8, md.y - 14 + (md.drop ? Math.round(Math.sin(this.t * 4)) : 0));
-    if (this.portal) { const f = Math.floor(this.t * 6) % 2 ? 124 : 196; spr('tiles', f, this.portal.x - 8, this.portal.y - 8, { scale: 1 }); spr('tiles', f, this.portal.x - 12, this.portal.y - 12, { scale: 1.5, alpha: 0.35, rot: this.t * 2 }); }
+    if (this.portal) {
+      const f = Math.floor(this.t * 6) % 2 ? 124 : 196, shut = this.portalLocked && this.portalLocked();
+      spr('tiles', f, this.portal.x - 8, this.portal.y - 8, { scale: 1, alpha: shut ? 0.5 : 1 });
+      if (!shut) spr('tiles', f, this.portal.x - 12, this.portal.y - 12, { scale: 1.5, alpha: 0.35, rot: this.t * 2 });
+    }
     for (const c of this.coins) {
       ctx.fillStyle = 'rgba(71,50,75,0.25)'; ctx.fillRect(Math.round(c.x) - 2, Math.round(c.y) + 3, 4, 1);
       spr('tiles', 225, Math.round(c.x) - 8, Math.round(c.y - c.z) - 8);
     }
+    if (this.drawExtras) this.drawExtras();
     // entities, y-sorted
     const list = this.ents.slice(); list.push(p); if (this.ally) list.push(this.ally); if (this.opp) list.push(this.opp);
     list.sort((a, b) => a.y - b.y);
@@ -763,9 +780,9 @@ class Play {
     bar(92, 6, 18, 12, p.shield >= p.maxShield ? 1 : this.shieldT / this.shieldEvery(), 'blue', 1);
     spr('tiles', 225, 3, 19); ptext(String(SAVE.gold), 18, 20, 'A');
     // level info
-    const left = Math.max(0, this.total - this.killed) + (this.bossDef && !this.bossDead ? 1 : 0);
-    stextO(`Level ${this.L}: ${this.def.name}`, HW / 2, 10, 6.4, P.white, P.dark, 'center', 700, 2.2);
-    stextO(this.state === 'clear' ? 'Find the portal' : `Monsters left: ${left}`, HW / 2, 20, 5.4, P.yelL, P.dark, 'center', 700, 2);
+    const left = Math.max(0, this.total - this.killed) + (this.bossDef && !this.bossDead ? 1 : 0), [h1, h2] = this.hudLines(left);
+    stextO(h1, HW / 2, 10, 6.4, P.white, P.dark, 'center', 700, 2.2);
+    stextO(h2, HW / 2, 20, 5.4, P.yelL, P.dark, 'center', 700, 2);
     // minimap (round frame)
     this.drawMinimap(HW - 54, 4);
     // jobs
@@ -804,6 +821,7 @@ class Play {
       ctx.globalAlpha = 1;
     }
     if (this.coach && !this.paused && !this.result) Coach.drawRun(this, u, HW, HH);
+    if (this.hudExtra && !this.paused && !this.result) this.hudExtra(u, HW, HH);
     // touch hints / pause icon
     if (IN.touch) {
       ctx.globalAlpha = 0.6; btn('grey', HW - 22, HH - 24, 18, 18, false); stext('II', HW - 13, HH - 15.5, 6, P.dark, 'center', 700); ctx.globalAlpha = 1;
@@ -828,6 +846,7 @@ class Play {
     for (const c of this.chests) if (!c.open) dot(c.x, c.y, P.yel);
     for (const e of this.ents) if (!e.dead) dot(e.x, e.y, e.boss ? P.white : P.red, e.boss ? 3 : 2);
     if (this.portal) dot(this.portal.x, this.portal.y, P.purp, 3);
+    if (this.mapDots) this.mapDots(dot);
     ctx.restore();
     spr('ui', 74, cx - 8, cy - 8, { rot: p.aim + Math.PI / 2, scale: 0.75 });
   }
@@ -845,7 +864,7 @@ class Play {
     ptext('PAUSED', x + w / 2, y + 12, 'B', 'center');
     let any = false;
     any = this.overlayBtn('red', x + 30, y + 40, 100, 21, 'Resume', () => { this.paused = false; }) || any;
-    any = this.overlayBtn('grey', x + 30, y + 66, 100, 21, 'Restart level', () => startLevel(this.li)) || any;
+    any = this.overlayBtn('grey', x + 30, y + 66, 100, 21, this.restartLabel || 'Restart level', () => this.restart()) || any;
     any = this.overlayBtn('grey', x + 30, y + 92, 100, 21, 'Back to town', () => this.toTown()) || any;
     if (tut) any = this.overlayBtn('grey', x + 30, y + 118, 100, 21, 'Skip tutorial', () => { Coach.skip(); this.coach = false; this.paused = false; }) || any;
     stext('Gold you picked up is already saved.', x + w / 2, y + h - 22, 4.8, P.dark, 'center', 500);
